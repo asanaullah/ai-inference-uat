@@ -1,0 +1,120 @@
+# Assisted by Claude Opus 4.6
+apiVersion: uat.openshift.io/v1
+kind: Test
+metadata:
+  name: inference
+  version: v0.0.1
+  description: Basic vLLM inference server validation with guidellm benchmarking
+spec:
+  requirements:
+    gpu: true
+
+  # Test source
+  source:
+    ginkgo: inference.go
+    goMod: go.mod
+    goSum: go.sum
+
+  # DAG definition - what resources to deploy and in what order
+  dag:
+    # Step 1: Deploy vLLM server (stays up for entire test)
+    # Note: Tekton must create a Service for DNS resolution
+    - name: vllm-server
+      type: deployment
+      image: nvcr.io/nvidia/vllm:26.03-py3
+      service:
+        enabled: true
+        port: 8000
+        name: vllm-server
+      command:
+        args:
+          - python
+          - -m
+          - vllm.entrypoints.openai.api_server
+        flags:
+          model: ibm-granite/granite-3.3-8b-instruct
+          port: 8000
+          max-model-len: 10000
+          gpu-memory-utilization: 0.6
+      env:
+        - name: HOME
+          value: /tmp
+      ports:
+        - containerPort: 8000
+          name: http
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8000
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 30
+      resources:
+        requests:
+          nvidia.com/gpu: '1'
+        limits:
+          nvidia.com/gpu: '1'
+      persistsThroughSweep: true
+      parameterSweep: null
+
+    # Step 2: Run pass-fail checks (health, model endpoint)
+    - name: pass-fail
+      type: pod
+      image: ghcr.io/vllm-project/guidellm:v0.6.1
+      dependsOn:
+        - vllm-server
+      labelFilter: pass-fail
+      env:
+        - name: HOME
+          value: /tmp
+        - name: SERVER_URL
+          value: '{{ services["vllm-server"].url }}'
+      persistsThroughSweep: false
+      parameterSweep: null
+
+    # Step 3: Run benchmark sweeps (only if pass-fail succeeded)
+    - name: sweep
+      type: pod
+      image: ghcr.io/vllm-project/guidellm:v0.6.1
+      dependsOn:
+        - pass-fail
+      labelFilter: quantitative
+      env:
+        - name: HOME
+          value: /tmp
+        - name: SERVER_URL
+          value: '{{ services["vllm-server"].url }}'
+        - name: SWEEP_COMMAND
+          value: '{{ paramSweep.command | toJson }}'
+      persistsThroughSweep: false
+      parameterSweep:
+        baseCommand:
+          args:
+            - guidellm
+            - benchmark
+            - run
+          flags:
+            target: '{{ services["vllm-server"].url }}'
+            output-dir: /workspace
+            outputs: json
+            rate-type: throughput
+            max-seconds: 120
+            rate: 1
+            data: prompt_tokens=256,output_tokens=128
+        entries:
+          - id: short-burst
+            description: Short high-rate burst benchmark
+            flags:
+              max-seconds: 30
+              rate: 4
+              data: prompt_tokens=128,output_tokens=64
+
+          - id: sustained-load
+            description: Sustained moderate-rate benchmark
+
+          - id: long-context
+            description: Long context window benchmark
+            flags:
+              max-seconds: 60
+              data: prompt_tokens=1024,output_tokens=512

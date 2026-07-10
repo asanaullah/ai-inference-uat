@@ -1,0 +1,65 @@
+# Assisted by Claude Opus 4.6
+# Example cluster spec — copy to ocp-test.local.yaml and fill in real values
+apiVersion: uat.openshift.io/v1
+kind: ClusterTest
+metadata:
+  name: my-cluster
+spec:
+  nodes:
+    - name: gpu-node-1
+      componentValidation:
+        sanity:
+          gpuCount: 4
+          gpuModel: NVIDIA-H100-80GB-HBM3
+          nvlink: NV6
+          nvlinkTopology: all-to-all
+          pcieWidth: 16
+          pcieGen: 5
+          cpuModel: AMD EPYC 9004 Series
+          cpuCount: 128
+          memory: 1024Gi
+          numaNodes: 2
+        ideal:
+          cudaDriverVersion: "550.00.00"
+          gpuPowerLimit: 700
+          gpuPersistenceMode: true
+          kernel: 5.14.0-400.el9.x86_64
+          hugepages: 8000Mi
+          cpuFreqGovernor: performance
+          cpuIdleDriver: acpi_idle
+          cpuIdleGovernor: menu
+          cpuCStatesEnabled: [POLL, C1, C2]
+          transparentHugepages: madvise
+
+    - name: gpu-node-2
+      componentValidation:
+        sanity:
+          gpuCount: 4
+          gpuModel: NVIDIA-A100-SXM4-40GB
+          nvlink: NV4
+          nvlinkTopology: all-to-all
+          pcieWidth: 16
+          pcieGen: 4
+          cpuModel: Intel(R) Xeon(R) Platinum 8300 Series
+          cpuCount: 64
+          memory: 512Gi
+          numaNodes: 2
+        ideal:
+          cudaDriverVersion: "550.00.00"
+          gpuPowerLimit: 400
+          gpuPersistenceMode: true
+          kernel: 5.14.0-400.el9.x86_64
+          hugepages: 8000Mi
+          cpuFreqGovernor: performance
+          cpuIdleDriver: intel_idle
+          cpuIdleGovernor: menu
+          cpuCStatesEnabled: [POLL, C1, C1E]
+          transparentHugepages: madvise
+
+  namespace: my-project
+
+  storage:
+    pvc: my-project-storage
+    basePath: uat/results
+
+  timeout: 2h

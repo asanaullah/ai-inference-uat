@@ -1,0 +1,17 @@
+# Assisted by Claude Opus 4.6
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: {{ task_name }}
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ managed_by_label }}
+spec:
+  params:
+    - name: timestamp
+      type: string
+  steps:
+    - name: exec
+      image: {{ ose_cli_image }}
+      script: |
+        oc exec {{ target }} -- {{ args | shell_join }}

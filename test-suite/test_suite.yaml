@@ -1,0 +1,16 @@
+# Assisted by Claude Opus 4.6
+apiVersion: uat.openshift.io/v1
+kind: TestSuite
+metadata:
+  name: inference-validation-suite
+  version: v0.0.1
+spec:
+  tests:
+    node:
+      - component
+      - inference
+    cluster: []
+    project: []
+
+  execution:
+    stopOnFailure: false

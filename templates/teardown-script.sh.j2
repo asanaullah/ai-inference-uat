@@ -1,0 +1,6 @@
+#!/bin/bash
+# Assisted by Claude Opus 4.6
+set -e
+echo "Tearing down resources with selector: {{ selector }}"
+oc delete pods,services,deployments -l {{ selector }} --ignore-not-found
+echo "Teardown complete"

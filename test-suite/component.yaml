@@ -1,0 +1,32 @@
+# Assisted by Claude Opus 4.6
+apiVersion: uat.openshift.io/v1
+kind: Test
+metadata:
+  name: component
+  version: v0.0.1
+  description: Validate node hardware and software against cluster specification
+spec:
+  requirements:
+    gpu: true
+
+  source:
+    ginkgo: component.go
+    goMod: go.mod
+    goSum: go.sum
+
+  dag:
+    - name: test-runner
+      type: pod
+      image: registry.redhat.io/ubi9/ubi:latest
+      labelFilter: pass-fail
+      resources:
+        requests:
+          nvidia.com/gpu: '{{ nodeSpec.componentValidation.sanity.gpuCount }}'
+        limits:
+          nvidia.com/gpu: '{{ nodeSpec.componentValidation.sanity.gpuCount }}'
+      env:
+        - name: NODE_NAME
+          value: '{{ nodeSpec.name }}'
+      privileged: false
+      persistsThroughSweep: false
+      parameterSweep: null

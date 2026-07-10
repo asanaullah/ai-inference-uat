@@ -1,0 +1,58 @@
+# Assisted by Claude Opus 4.6
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ pod_name }}
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ managed_by_label }}
+    test: {{ test }}
+    node: {{ node }}
+spec:
+  nodeSelector:
+    {{ node_selector_key }}: {{ node }}
+{% if privileged %}
+  hostPID: true
+{% endif %}
+  containers:
+    - name: {{ pod_name }}
+      image: {{ image }}
+{% if command %}
+      command:
+{% for arg in command %}
+        - {{ arg | yaml_quote }}
+{% endfor %}
+{% endif %}
+{% if env %}
+      env:
+{% for e in env %}
+        - name: {{ e.name }}
+          value: {{ e.value | yaml_quote }}
+{% endfor %}
+{% endif %}
+{% if resources %}
+      resources:
+{{ resources | to_yaml | indent(8, first=True) }}
+{% endif %}
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+          subPath: {{ workspace_subpath }}
+        - name: workspace
+          mountPath: /binaries
+          subPath: {{ binaries_subpath }}
+{% for vm in volume_mounts %}
+        - {{ vm | to_yaml | indent(10) }}
+{% endfor %}
+{% if privileged %}
+      securityContext:
+        privileged: true
+{% endif %}
+  volumes:
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: {{ pvc }}
+{% for v in volumes %}
+    - {{ v | to_yaml | indent(6) }}
+{% endfor %}
+  restartPolicy: Never

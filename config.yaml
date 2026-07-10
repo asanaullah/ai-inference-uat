@@ -1,0 +1,13 @@
+# Assisted by Claude Opus 4.6
+oseCLIImage: registry.redhat.io/openshift4/ose-cli:latest
+builderImage: golang:1.25
+aggregatorImage: python:3-slim
+configmapName: uat-test-source
+builderPodName: ginkgo-builder
+aggregatorPodName: uat-aggregator
+nodeSelectorKey: kubernetes.io/hostname
+managedByLabel: uat-generator
+builderTimeout: 300s
+aggregatorTimeout: 120s
+deployTimeout: 600s
+testTimeout: 600s

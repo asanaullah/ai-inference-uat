@@ -1,0 +1,64 @@
+# Assisted by Claude Opus 4.6
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: {{ pipeline_name }}
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ managed_by_label }}
+spec:
+{% if params %}
+  params:
+{% for p in params %}
+    - name: {{ p.name }}
+      type: {{ p.type }}
+{% endfor %}
+{% endif %}
+  tasks:
+{% for task in tasks %}
+    - name: {{ task.name }}
+{% if task.ref_type == 'pipeline' %}
+      pipelineRef:
+        name: {{ task.ref_name }}
+{% else %}
+      taskRef:
+        name: {{ task.ref_name }}
+{% endif %}
+{% if task.params %}
+      params:
+{% for p in task.params %}
+        - name: {{ p.name }}
+          value: {{ p.value | yaml_quote }}
+{% endfor %}
+{% endif %}
+{% if task.run_after %}
+      runAfter:
+{% for dep in task.run_after %}
+        - {{ dep }}
+{% endfor %}
+{% endif %}
+{% if task.on_error %}
+      onError: {{ task.on_error }}
+{% endif %}
+{% endfor %}
+{% if finally_tasks %}
+  finally:
+{% for task in finally_tasks %}
+    - name: {{ task.name }}
+      taskRef:
+        name: {{ task.ref_name }}
+{% if task.params %}
+      params:
+{% for p in task.params %}
+        - name: {{ p.name }}
+          value: {{ p.value | yaml_quote }}
+{% endfor %}
+{% endif %}
+{% if task.run_after %}
+      runAfter:
+{% for dep in task.run_after %}
+        - {{ dep }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endif %}

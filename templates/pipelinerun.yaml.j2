@@ -1,0 +1,13 @@
+# Assisted by Claude Opus 4.6
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: uat-cluster-run-
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ managed_by_label }}
+spec:
+  pipelineRef:
+    name: uat-cluster
+  timeouts:
+    pipeline: {{ timeout }}

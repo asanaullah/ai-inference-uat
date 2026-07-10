@@ -1,0 +1,21 @@
+# Assisted by Claude Opus 4.6
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: {{ task_name }}
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ managed_by_label }}
+spec:
+  params:
+    - name: timestamp
+      type: string
+  steps:
+    - name: cleanup
+      image: {{ ose_cli_image }}
+      script: |
+        echo "Cleaning up all UAT resources..."
+        oc delete pods -l app.kubernetes.io/managed-by={{ managed_by_label }} --ignore-not-found
+        oc delete services -l app.kubernetes.io/managed-by={{ managed_by_label }} --ignore-not-found
+        oc delete configmap {{ configmap_name }} --ignore-not-found
+        echo "Cleanup complete"

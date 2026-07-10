@@ -1,0 +1,33 @@
+# Assisted by Claude Opus 4.6
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ pod_name }}
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ managed_by_label }}
+spec:
+  containers:
+    - name: {{ pod_name }}
+      image: {{ image }}
+      command: ["sleep", "infinity"]
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+{% if workspace_subpath %}
+          subPath: {{ workspace_subpath }}
+{% endif %}
+{% if configmap_mount %}
+        - name: source
+          mountPath: /src
+{% endif %}
+  volumes:
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: {{ pvc }}
+{% if configmap_mount %}
+    - name: source
+      configMap:
+        name: {{ configmap_name }}
+{% endif %}
+  restartPolicy: Never

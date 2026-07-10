@@ -1,0 +1,4 @@
+#!/bin/bash
+# Assisted by Claude Opus 4.6
+set -e
+oc exec {{ target }} -- {{ args | shell_join }}
