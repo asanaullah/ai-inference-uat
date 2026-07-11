@@ -644,3 +644,15 @@ config.yaml           Tool config
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions and [IMPLEMENTATION.md](IMPLEMENTATION.md) for implementation details.
+
+## Why ConfigMaps
+
+The generator delivers Go source, build scripts, cluster config, and the aggregation script to the builder pod via a Kubernetes ConfigMap. An alternative approach — using a setup pod that clones Git repos directly onto the PVC — was explored and rejected due to the following challenges:
+
+- **Cluster config consistency.** The cluster YAML contains sensitive, environment-specific details (node names, GPU counts, namespace, storage config). With Git clones, the cluster config must either live in a public repo (security risk) or on a separate PVC (adding a `clusterConfigSource`/`clusterConfigPvc` configuration surface). The ConfigMap approach uses the same local file the generator already reads, guaranteeing the cluster config in the pod matches what the generator used to compute the DAG.
+
+- **Test suite consistency.** The generator reads test definitions locally (`--suite-dir`) to compute the step DAG — which pods to create, what commands to run, what sweep entries to generate. A setup pod would clone the test suite from a remote repo at runtime. If the local directory and the remote repo diverge (different branch, uncommitted changes, different path), the DAG won't match the compiled binaries: steps may reference tests that don't exist on the PVC, or miss tests that do. The ConfigMap eliminates this class of drift by bundling exactly the source the generator consumed.
+
+- **Additional infrastructure.** The setup pod approach requires a Python image, network access to clone repos, `pip install` of dependencies, and a standalone `builder.py` script that duplicates test-suite parsing logic already in the generator. The ConfigMap approach has no runtime dependencies beyond `oc` and the Go toolchain.
+
+The ConfigMap approach has a **1MB size limit** (Kubernetes hard constraint). This is sufficient for the current test suite but may become a bottleneck if the number of tests or the size of `go.sum` grows significantly. If the limit is hit, the recommended mitigation is to split tests across multiple suite directories and run separate pipelines, or to revisit the Git clone approach with a mechanism to pin the exact commit the generator ran against.
