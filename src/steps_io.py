@@ -20,14 +20,14 @@ def write_steps(
     path: Path,
 ) -> None:
     data = {
-        'metadata': {
-            'toolConfig': tc.model_dump(by_alias=True),
-            'clusterSpec': cs.model_dump(by_alias=True),
-            'stopOnFailure': stop_on_failure,
+        "metadata": {
+            "toolConfig": tc.model_dump(by_alias=True),
+            "clusterSpec": cs.model_dump(by_alias=True),
+            "stopOnFailure": stop_on_failure,
         },
-        'setup': [asdict(s) for s in setup_steps],
-        'nodes': {n: [asdict(s) for s in sl] for n, sl in node_steps.items()},
-        'teardown': [asdict(s) for s in teardown_steps],
+        "setup": [asdict(s) for s in setup_steps],
+        "nodes": {n: [asdict(s) for s in sl] for n, sl in node_steps.items()},
+        "teardown": [asdict(s) for s in teardown_steps],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2))
@@ -35,15 +35,17 @@ def write_steps(
 
 def load_steps(
     path: Path,
-) -> tuple[list[Step], dict[str, list[Step]], list[Step], ToolConfig, ClusterTestSpec, bool]:
+) -> tuple[
+    list[Step], dict[str, list[Step]], list[Step], ToolConfig, ClusterTestSpec, bool
+]:
     with open(path) as f:
         data = json.load(f)
 
     sf = StepsFile(**data)
 
-    tc = ToolConfig(**sf.metadata['toolConfig'])
-    cs = ClusterTestSpec(**sf.metadata['clusterSpec'])
-    stop_on_failure = sf.metadata['stopOnFailure']
+    tc = ToolConfig(**sf.metadata["toolConfig"])
+    cs = ClusterTestSpec(**sf.metadata["clusterSpec"])
+    stop_on_failure = sf.metadata["stopOnFailure"]
 
     setup = [Step(**s) for s in sf.setup]
     nodes = {n: [Step(**s) for s in sl] for n, sl in sf.nodes.items()}

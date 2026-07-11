@@ -132,7 +132,7 @@ Every parsed config field and where it takes effect. **This is the section to ch
 | `spec.storage.basePath` | `StorageConfig.base_path` | Root of the directory hierarchy on the PVC: `<basePath>/<timestamp>/node/<node>/<test>/<dag>/`. See PVC Directory Hierarchy |
 | `spec.timeout` | `ClusterTestSpec.timeout` | Sets `spec.timeouts.pipeline` on the PipelineRun manifest (e.g. `2h`) |
 
-### Test (`test-suite/<test>.yaml`)
+### Test (`<suite-dir>/<test>.yaml`)
 
 | Field | Model | Effect |
 |---|---|---|

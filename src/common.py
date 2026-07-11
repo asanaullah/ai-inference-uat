@@ -22,15 +22,15 @@ def create_jinja_env(template_dir: str | Path) -> Environment:
         lstrip_blocks=True,
         keep_trailing_newline=True,
     )
-    env.filters['to_yaml'] = _to_yaml
-    env.filters['toJson'] = _to_json
-    env.filters['yaml_quote'] = _yaml_quote
-    env.filters['shell_join'] = _shell_join
+    env.filters["to_yaml"] = _to_yaml
+    env.filters["toJson"] = _to_json
+    env.filters["yaml_quote"] = _yaml_quote
+    env.filters["shell_join"] = _shell_join
     return env
 
 
 def _to_yaml(value: Any) -> str:
-    return yaml.dump(value, default_flow_style=False).rstrip('\n')
+    return yaml.dump(value, default_flow_style=False).rstrip("\n")
 
 
 def _to_json(value: Any) -> str:
@@ -39,7 +39,7 @@ def _to_json(value: Any) -> str:
 
 def _yaml_quote(value: str) -> str:
     s = str(value)
-    if not s or any(c in s for c in ':{}[],"\'|>&*#?!%@') or s != s.strip():
+    if not s or any(c in s for c in ":{}[],\"'|>&*#?!%@") or s != s.strip():
         return json.dumps(s)
     return s
 
@@ -48,18 +48,24 @@ def _shell_join(value: list[str]) -> str:
     return shlex.join(value)
 
 
-def render_template(env: Environment, template_name: str, context: dict[str, Any]) -> str:
+def render_template(
+    env: Environment, template_name: str, context: dict[str, Any]
+) -> str:
     template = env.get_template(template_name)
     return template.render(context)
 
 
-def render_manifest(env: Environment, template_name: str, context: dict[str, Any]) -> str:
+def render_manifest(
+    env: Environment, template_name: str, context: dict[str, Any]
+) -> str:
     content = render_template(env, template_name, context)
     validate_manifest(content)
     return content
 
 
-def render_string(env: Environment, template_string: str, context: dict[str, Any]) -> str:
+def render_string(
+    env: Environment, template_string: str, context: dict[str, Any]
+) -> str:
     template = env.from_string(template_string)
     return template.render(context)
 
@@ -72,14 +78,14 @@ def validate_manifest(content: str) -> None:
             continue
         if not isinstance(doc, dict):
             raise ValueError(f"Manifest document is not a mapping: {doc}")
-        for required in ('apiVersion', 'kind'):
+        for required in ("apiVersion", "kind"):
             if required not in doc:
                 raise ValueError(
                     f"Manifest missing required field '{required}': "
                     f"{doc.get('metadata', {}).get('name', '<unknown>')}"
                 )
-        metadata = doc.get('metadata', {})
-        if 'name' not in metadata and 'generateName' not in metadata:
+        metadata = doc.get("metadata", {})
+        if "name" not in metadata and "generateName" not in metadata:
             raise ValueError(
                 f"Manifest missing metadata.name or metadata.generateName: "
                 f"{doc.get('kind', '<unknown>')}"
@@ -98,7 +104,7 @@ def load_config(
 ) -> tuple[TestSuite, ClusterTest, list[LoadedTest]]:
     suite_dir = Path(suite_dir)
 
-    with open(suite_dir / 'test_suite.yaml') as f:
+    with open(suite_dir / "test_suite.yaml") as f:
         suite = TestSuite(**yaml.safe_load(f))
 
     with open(cluster_path) as f:
@@ -106,20 +112,22 @@ def load_config(
 
     tests: list[LoadedTest] = []
     for test_name in suite.spec.tests.node:
-        with open(suite_dir / f'{test_name}.yaml') as f:
+        with open(suite_dir / f"{test_name}.yaml") as f:
             test_def = Test(**yaml.safe_load(f))
 
         go_source = (suite_dir / test_def.spec.source.ginkgo).read_text()
         go_mod = (suite_dir / test_def.spec.source.go_mod).read_text()
         go_sum = (suite_dir / test_def.spec.source.go_sum).read_text()
 
-        tests.append(LoadedTest(
-            name=test_name,
-            spec=test_def.spec,
-            go_source=go_source,
-            go_mod=go_mod,
-            go_sum=go_sum,
-        ))
+        tests.append(
+            LoadedTest(
+                name=test_name,
+                spec=test_def.spec,
+                go_source=go_source,
+                go_mod=go_mod,
+                go_sum=go_sum,
+            )
+        )
 
     return suite, cluster, tests
 
@@ -127,5 +135,5 @@ def load_config(
 def build_command(args: list[str], flags: dict[str, Any]) -> list[str]:
     cmd = list(args)
     for key, value in flags.items():
-        cmd.append(f'--{key}={value}')
+        cmd.append(f"--{key}={value}")
     return cmd

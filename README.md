@@ -66,7 +66,7 @@ The generator can also consume `steps.json` as input via `--steps`, skipping con
 
 ```bash
 # Normal: compute steps from config, write steps.json + manual + tekton
-python -m src --suite-dir test-suite --cluster cluster/ocp-test.yaml
+python -m src --suite-dir examples/minimal --cluster cluster/ocp-test.yaml
 
 # From steps: load steps.json, write manual + tekton
 python -m src --steps build/steps.json
@@ -162,7 +162,7 @@ pip install -r requirements.txt
 
 ```bash
 python -m src \
-  --suite-dir test-suite \
+  --suite-dir examples/minimal \
   --cluster cluster/ocp-test.yaml \
   --config config.yaml \
   --templates-dir templates \
@@ -175,7 +175,7 @@ Output is written to `build/manual/` and `build/tekton/`.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--suite-dir` | (required\*) | Directory containing `test_suite.yaml` and test definitions |
+| `--suite-dir` | (required\*) | Directory containing `test_suite.yaml` (required), test definition YAMLs, and Go source files |
 | `--cluster` | (required\*) | Path to the cluster config YAML |
 | `--config` | `config.yaml` | Path to the tool config |
 | `--run-id` | `manual-run` | Timestamp substitute for manual output |
@@ -248,7 +248,7 @@ spec:
 
 ### 2. Create the Test Definition
 
-Create `test-suite/my-test.yaml`:
+Create `examples/minimal/my-test.yaml`:
 
 ```yaml
 apiVersion: uat.openshift.io/v1
@@ -280,7 +280,7 @@ spec:
 
 ### 3. Write the Ginkgo Test
 
-Create `test-suite/my-test.go`:
+Create `examples/minimal/my-test.go`:
 
 ```go
 package test
@@ -309,7 +309,7 @@ The `Label("pass-fail")` must match the `labelFilter` in the test YAML. The comp
 ### 4. Generate and Run
 
 ```bash
-python -m src --suite-dir test-suite --cluster cluster/ocp-test.yaml
+python -m src --suite-dir examples/minimal --cluster cluster/ocp-test.yaml
 ```
 
 The generator compiles `my-test.go` into a binary and produces manifests that run it on each target node.
@@ -526,7 +526,7 @@ The `--templates-dir` CLI arg loads all Jinja2 templates from a custom directory
 ```bash
 cp -r templates/ my-templates/
 # edit my-templates/dag-pod.yaml.j2 to add custom annotations
-python -m src --templates-dir my-templates/ --suite-dir test-suite --cluster cluster/ocp-test.yaml
+python -m src --templates-dir my-templates/ --suite-dir examples/minimal --cluster cluster/ocp-test.yaml
 ```
 
 ### Custom Aggregation
@@ -536,7 +536,7 @@ The `--scripts-dir` CLI arg controls where `aggregate.py` is loaded from. Replac
 ```bash
 cp -r scripts/ my-scripts/
 # edit my-scripts/aggregate.py to push results to a dashboard
-python -m src --scripts-dir my-scripts/ --suite-dir test-suite --cluster cluster/ocp-test.yaml
+python -m src --scripts-dir my-scripts/ --suite-dir examples/minimal --cluster cluster/ocp-test.yaml
 ```
 
 The script receives the results directory as its first argument and is expected to scan for `junit.xml` files under `node/`, `cluster/`, and `project/` subdirectories.
@@ -638,7 +638,8 @@ scripts/
 templates/
   *.yaml.j2           Jinja2 templates for Kubernetes/Tekton manifests
   *.sh.j2             Jinja2 templates for shell scripts
-test-suite/           Test definitions, Go source, go.mod
+examples/
+  minimal/            Example test suite (test definitions, Go source, go.mod)
 cluster/              Cluster configs
 config.yaml           Tool config
 ```
