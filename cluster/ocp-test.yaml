@@ -1,12 +1,11 @@
 # Assisted by Claude Opus 4.6
-# Example cluster spec — copy to ocp-test.local.yaml and fill in real values
 apiVersion: uat.openshift.io/v1
 kind: ClusterTest
 metadata:
-  name: my-cluster
+  name: ocp-uat
 spec:
   nodes:
-    - name: gpu-node-1
+    - name: wrk-6
       componentValidation:
         sanity:
           gpuCount: 4
@@ -15,40 +14,41 @@ spec:
           nvlinkTopology: all-to-all
           pcieWidth: 16
           pcieGen: 5
-          cpuModel: AMD EPYC 9004 Series
-          cpuCount: 128
-          memory: 1024Gi
+          cpuModel: AMD EPYC 9754 128-Core Processor
+          cpuCount: 192
+          memory: 1512Gi
           numaNodes: 2
         ideal:
-          cudaDriverVersion: "550.00.00"
+          cudaDriverVersion: "580.105.08"
           gpuPowerLimit: 700
           gpuPersistenceMode: true
-          kernel: 5.14.0-400.el9.x86_64
+          kernel: 5.14.0-570.106.1.el9_6.x86_64
           hugepages: 8000Mi
           cpuFreqGovernor: performance
           cpuIdleDriver: acpi_idle
           cpuIdleGovernor: menu
+          # AMD acpi_idle C2 is equivalent to Intel C1E (low single-digit us wake-up)
           cpuCStatesEnabled: [POLL, C1, C2]
           transparentHugepages: madvise
 
-    - name: gpu-node-2
+    - name: wrk-4
       componentValidation:
         sanity:
-          gpuCount: 4
+          gpuCount: 2
           gpuModel: NVIDIA-A100-SXM4-40GB
           nvlink: NV4
           nvlinkTopology: all-to-all
           pcieWidth: 16
           pcieGen: 4
-          cpuModel: Intel(R) Xeon(R) Platinum 8300 Series
-          cpuCount: 64
-          memory: 512Gi
+          cpuModel: Intel(R) Xeon(R) Platinum 8358 CPU @ 2.60GHz
+          cpuCount: 128
+          memory: 1007Gi
           numaNodes: 2
         ideal:
-          cudaDriverVersion: "550.00.00"
+          cudaDriverVersion: "580.105.08"
           gpuPowerLimit: 400
           gpuPersistenceMode: true
-          kernel: 5.14.0-400.el9.x86_64
+          kernel: 5.14.0-570.106.1.el9_6.x86_64
           hugepages: 8000Mi
           cpuFreqGovernor: performance
           cpuIdleDriver: intel_idle
@@ -56,10 +56,11 @@ spec:
           cpuCStatesEnabled: [POLL, C1, C1E]
           transparentHugepages: madvise
 
-  namespace: my-project
+
+  namespace: coldpress-project
 
   storage:
-    pvc: my-project-storage
+    pvc: coldpress-project-storage
     basePath: uat/results
 
   timeout: 2h
