@@ -111,7 +111,9 @@ class TestDeriveManualScript:
             },
         )
         script = _derive_manual_script(step, env)
-        assert "oc delete pods,services,deployments -l app=x --ignore-not-found" in script
+        assert (
+            "oc delete pods,services,deployments -l app=x --ignore-not-found" in script
+        )
 
     def test_delete_all(self, env):
         step = Step(
@@ -124,8 +126,14 @@ class TestDeriveManualScript:
             },
         )
         script = _derive_manual_script(step, env)
-        assert "oc delete pods -l app.kubernetes.io/managed-by=uat --ignore-not-found" in script
-        assert "oc delete services -l app.kubernetes.io/managed-by=uat --ignore-not-found" in script
+        assert (
+            "oc delete pods -l app.kubernetes.io/managed-by=uat --ignore-not-found"
+            in script
+        )
+        assert (
+            "oc delete services -l app.kubernetes.io/managed-by=uat --ignore-not-found"
+            in script
+        )
         assert "oc delete configmap cm --ignore-not-found" in script
 
     def test_apply_returns_none(self, env):
