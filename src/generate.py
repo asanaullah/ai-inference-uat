@@ -23,44 +23,23 @@ from .common import (
 )
 from .models import ClusterTestSpec, LoadedTest, Step, ToolConfig
 from .node import compute_node_steps
+from .steps_io import load_steps, write_steps
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='UAT Test Harness Generator')
-    parser.add_argument('--suite-dir', required=True)
-    parser.add_argument('--cluster', required=True)
+    parser.add_argument('--suite-dir')
+    parser.add_argument('--cluster')
     parser.add_argument('--config', default='config.yaml')
     parser.add_argument('--run-id', default='manual-run')
     parser.add_argument('--output', default='build')
     parser.add_argument('--scripts-dir', default='scripts')
     parser.add_argument('--templates-dir', default='templates')
+    parser.add_argument('--steps', default=None,
+                        help='Generate from a steps.json file instead of config')
     args = parser.parse_args()
 
-    try:
-        tc = load_tool_config(args.config)
-    except FileNotFoundError:
-        print(f"Error: config file not found: {args.config}")
-        raise SystemExit(1)
-    except yaml.YAMLError as e:
-        print(f"Error: invalid YAML in {args.config}: {e}")
-        raise SystemExit(1)
-    except ValidationError as e:
-        print(f"Error: invalid config in {args.config}:\n{e}")
-        raise SystemExit(1)
-
-    try:
-        suite, cluster, tests = load_config(args.suite_dir, args.cluster)
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
-        raise SystemExit(1)
-    except yaml.YAMLError as e:
-        print(f"Error: invalid YAML: {e}")
-        raise SystemExit(1)
-    except ValidationError as e:
-        print(f"Error: invalid test/cluster config:\n{e}")
-        raise SystemExit(1)
-
-    cs = cluster.spec
+    output_dir = Path(args.output)
 
     templates_dir = Path(args.templates_dir)
     if not templates_dir.is_dir():
@@ -72,69 +51,124 @@ def main() -> None:
         print(f"Error initializing template engine: {e}")
         raise SystemExit(1)
 
-    print(f"Cluster: {Path(args.cluster).stem}")
-    print(f"Namespace: {cs.namespace}")
-    print(f"Nodes: {[n.name for n in cs.nodes]}")
-    print(f"Node tests: {suite.spec.tests.node}")
-    if suite.spec.tests.cluster:
-        print(f"Cluster tests (not yet implemented): {suite.spec.tests.cluster}")
-    if suite.spec.tests.project:
-        print(f"Project tests (not yet implemented): {suite.spec.tests.project}")
-    print(f"Tests loaded: {[t.name for t in tests]}")
-
-    scripts_dir = Path(args.scripts_dir)
-    try:
-        aggregate_py = (scripts_dir / 'aggregate.py').read_text()
-    except FileNotFoundError:
-        print(f"Error: aggregate.py not found in {args.scripts_dir}")
-        raise SystemExit(1)
-
-    # Layer 1: Step computation
-    try:
-        setup_steps = compute_setup_steps(
-            tests, tc, cs, jinja_env, args.cluster, args.suite_dir,
-            aggregate_py,
-        )
-    except Exception as e:
-        print(f"Error computing setup steps: {e}")
-        raise SystemExit(1)
-
-    node_steps: dict[str, list[Step]] = {}
-    for node_spec in cs.nodes:
-        print(f"Processing node: {node_spec.name}")
+    if args.steps:
         try:
-            steps = compute_node_steps(
-                node_spec, tests, tc, cs.namespace, cs.storage.pvc,
-                cs.storage.base_path, jinja_env, suite.spec.execution.stop_on_failure,
+            setup_steps, node_steps, teardown_steps, tc, cs, stop_on_failure = \
+                load_steps(Path(args.steps))
+        except FileNotFoundError:
+            print(f"Error: steps file not found: {args.steps}")
+            raise SystemExit(1)
+        except Exception as e:
+            print(f"Error loading steps file: {e}")
+            raise SystemExit(1)
+        print(f"Loaded steps from {args.steps}")
+        print(f"Namespace: {cs.namespace}")
+        print(f"Nodes: {list(node_steps.keys())}")
+    else:
+        if not args.suite_dir or not args.cluster:
+            print("Error: --suite-dir and --cluster are required "
+                  "when --steps is not provided")
+            raise SystemExit(1)
+
+        try:
+            tc = load_tool_config(args.config)
+        except FileNotFoundError:
+            print(f"Error: config file not found: {args.config}")
+            raise SystemExit(1)
+        except yaml.YAMLError as e:
+            print(f"Error: invalid YAML in {args.config}: {e}")
+            raise SystemExit(1)
+        except ValidationError as e:
+            print(f"Error: invalid config in {args.config}:\n{e}")
+            raise SystemExit(1)
+
+        try:
+            suite, cluster, tests = load_config(args.suite_dir, args.cluster)
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
+            raise SystemExit(1)
+        except yaml.YAMLError as e:
+            print(f"Error: invalid YAML: {e}")
+            raise SystemExit(1)
+        except ValidationError as e:
+            print(f"Error: invalid test/cluster config:\n{e}")
+            raise SystemExit(1)
+
+        cs = cluster.spec
+
+        print(f"Cluster: {Path(args.cluster).stem}")
+        print(f"Namespace: {cs.namespace}")
+        print(f"Nodes: {[n.name for n in cs.nodes]}")
+        print(f"Node tests: {suite.spec.tests.node}")
+        if suite.spec.tests.cluster:
+            print(f"Cluster tests (not yet implemented): {suite.spec.tests.cluster}")
+        if suite.spec.tests.project:
+            print(f"Project tests (not yet implemented): {suite.spec.tests.project}")
+        print(f"Tests loaded: {[t.name for t in tests]}")
+
+        scripts_dir = Path(args.scripts_dir)
+        try:
+            aggregate_py = (scripts_dir / 'aggregate.py').read_text()
+        except FileNotFoundError:
+            print(f"Error: aggregate.py not found in {args.scripts_dir}")
+            raise SystemExit(1)
+
+        try:
+            setup_steps = compute_setup_steps(
+                tests, tc, cs, jinja_env, args.cluster, args.suite_dir,
+                aggregate_py,
             )
         except Exception as e:
-            print(f"Error computing steps for node {node_spec.name}: {e}")
+            print(f"Error computing setup steps: {e}")
             raise SystemExit(1)
-        if steps:
-            node_steps[node_spec.name] = steps
-        else:
-            print(f"  No tests for {node_spec.name} (all skipped)")
 
-    try:
-        teardown_steps = compute_teardown_steps(tc, cs, jinja_env)
-    except Exception as e:
-        print(f"Error computing teardown steps: {e}")
-        raise SystemExit(1)
+        node_steps: dict[str, list[Step]] = {}
+        for node_spec in cs.nodes:
+            print(f"Processing node: {node_spec.name}")
+            try:
+                steps = compute_node_steps(
+                    node_spec, tests, tc, cs.namespace, cs.storage.pvc,
+                    cs.storage.base_path, jinja_env,
+                    suite.spec.execution.stop_on_failure,
+                )
+            except Exception as e:
+                print(f"Error computing steps for node {node_spec.name}: {e}")
+                raise SystemExit(1)
+            if steps:
+                node_steps[node_spec.name] = steps
+            else:
+                print(f"  No tests for {node_spec.name} (all skipped)")
 
-    # Layer 2: Manual writer
-    output_dir = Path(args.output)
+        try:
+            teardown_steps = compute_teardown_steps(tc, cs, jinja_env)
+        except Exception as e:
+            print(f"Error computing teardown steps: {e}")
+            raise SystemExit(1)
+
+        stop_on_failure = suite.spec.execution.stop_on_failure
+
+        try:
+            write_steps(setup_steps, node_steps, teardown_steps,
+                        tc, cs, stop_on_failure, output_dir / 'steps.json')
+        except Exception as e:
+            print(f"Error writing steps.json: {e}")
+            raise SystemExit(1)
+        print(f"Steps DAG written to {output_dir / 'steps.json'}")
+
+    # Manual writer
     try:
-        write_manual(setup_steps, node_steps, teardown_steps, output_dir, args.run_id, jinja_env)
+        write_manual(setup_steps, node_steps, teardown_steps,
+                     output_dir, args.run_id, jinja_env)
     except Exception as e:
         print(f"Error writing manual output: {e}")
         raise SystemExit(1)
 
-    # Layer 3: Tekton writer
+    # Tekton writer
     try:
         write_tekton(
             setup_steps, node_steps, teardown_steps,
             tc, cs, jinja_env, output_dir,
-            suite.spec.execution.stop_on_failure,
+            stop_on_failure,
         )
     except Exception as e:
         print(f"Error writing Tekton output: {e}")

@@ -6,6 +6,7 @@ A declarative test harness that generates Kubernetes manifests from test definit
 
 - [How It Works](#how-it-works)
   - [Three-Layer Architecture](#three-layer-architecture)
+  - [Intermediate DAG (steps.json)](#intermediate-dag-stepsjson)
   - [Execution Flow](#execution-flow)
   - [Test Scopes](#test-scopes)
   - [PVC Directory Hierarchy](#pvc-directory-hierarchy)
@@ -56,6 +57,28 @@ Test Definitions (YAML + Go) + Node List -> python -m src +                     
 2. **Manual writer** — writes generate steps as files and derives shell scripts from command steps.
 
 3. **Tekton writer** — derives Tekton Tasks from command steps and assembles them into Pipelines. 
+
+### Intermediate DAG (steps.json)
+
+After step computation and before writing output, the generator serializes the full step list to `build/steps.json`. This file captures the complete DAG — setup, per-node, and teardown steps — along with the tool and cluster config used to produce them.
+
+The generator can also consume `steps.json` as input via `--steps`, skipping config loading and step computation entirely:
+
+```bash
+# Normal: compute steps from config, write steps.json + manual + tekton
+python -m src --suite-dir test-suite --cluster cluster/ocp-test.yaml
+
+# From steps: load steps.json, write manual + tekton
+python -m src --steps build/steps.json
+```
+
+This enables a two-phase workflow for custom step injection:
+
+1. Generate `steps.json` from config
+2. Edit the file — add, remove, or reorder steps
+3. Re-run with `--steps` to produce output from the modified DAG
+
+The file is validated on load with Pydantic (field types, metadata structure) and structural checks (unique step names per section, source references point to existing generate steps, valid command and probe values).
 
 ### Execution Flow
 
@@ -152,13 +175,16 @@ Output is written to `build/manual/` and `build/tekton/`.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--suite-dir` | (required) | Directory containing `test_suite.yaml` and test definitions |
-| `--cluster` | (required) | Path to the cluster config YAML |
+| `--suite-dir` | (required\*) | Directory containing `test_suite.yaml` and test definitions |
+| `--cluster` | (required\*) | Path to the cluster config YAML |
 | `--config` | `config.yaml` | Path to the tool config |
 | `--run-id` | `manual-run` | Timestamp substitute for manual output |
 | `--output` | `build` | Output directory |
 | `--templates-dir` | `templates` | Path to Jinja2 templates |
 | `--scripts-dir` | `scripts` | Path to support scripts (e.g. `aggregate.py`) |
+| `--steps` | | Path to a `steps.json` file; skips config loading and step computation |
+
+\* Not required when `--steps` is provided.
 
 ### Run Manually
 
@@ -606,6 +632,7 @@ src/
   node.py             Node-level step computation, DAG pod rendering
   common.py           Jinja2 engine, manifest validation, config loading
   models.py           Pydantic schemas and dataclasses
+  steps_io.py         Intermediate DAG serialization and loading
 scripts/
   aggregate.py        JUnit XML aggregation (deployed via ConfigMap)
 templates/

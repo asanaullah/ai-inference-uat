@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -183,3 +183,76 @@ class Step:
     source: list[str] = field(default_factory=list)
     node: str = ''
     test: str = ''
+
+
+# ---------------------------------------------------------------------------
+# StepsFile (steps.json)
+# ---------------------------------------------------------------------------
+
+_VALID_COMMANDS = {'apply', 'exec', 'delete', 'delete-all'}
+_VALID_PROBES = {'none', 'wait-ready', 'poll-completed'}
+
+
+def _validate_section(steps: list[dict[str, Any]], section: str) -> None:
+    names: set[str] = set()
+    gen_names: set[str] = set()
+    for s in steps:
+        name = s.get('name', '')
+        stype = s.get('type', '')
+
+        if not name:
+            raise ValueError(f"Step in {section} missing 'name'")
+        if name in names:
+            raise ValueError(f"Duplicate step name '{name}' in {section}")
+        names.add(name)
+
+        if stype not in ('generate', 'command'):
+            raise ValueError(
+                f"Step '{name}' in {section} has invalid type '{stype}'")
+
+        config = s.get('config', {})
+        if stype == 'generate':
+            gen_names.add(name)
+            if not s.get('content'):
+                raise ValueError(
+                    f"Generate step '{name}' in {section} has empty content")
+            if 'output' not in config:
+                raise ValueError(
+                    f"Generate step '{name}' in {section} missing config.output")
+        else:
+            cmd = config.get('command')
+            if cmd not in _VALID_COMMANDS:
+                raise ValueError(
+                    f"Command step '{name}' in {section} has invalid "
+                    f"command '{cmd}' (expected one of {_VALID_COMMANDS})")
+            probe = config.get('probe', 'none')
+            if probe not in _VALID_PROBES:
+                raise ValueError(
+                    f"Command step '{name}' in {section} has invalid "
+                    f"probe '{probe}' (expected one of {_VALID_PROBES})")
+            for src in s.get('source', []):
+                if src not in gen_names:
+                    raise ValueError(
+                        f"Command step '{name}' in {section} references "
+                        f"source '{src}' which is not a preceding generate step")
+
+
+class StepsFile(BaseModel):
+    metadata: dict[str, Any]
+    setup: list[dict[str, Any]]
+    nodes: dict[str, list[dict[str, Any]]]
+    teardown: list[dict[str, Any]]
+
+    @model_validator(mode='after')
+    def validate_structure(self) -> 'StepsFile':
+        for key in ('toolConfig', 'clusterSpec', 'stopOnFailure'):
+            if key not in self.metadata:
+                raise ValueError(f"metadata missing required key '{key}'")
+        ToolConfig(**self.metadata['toolConfig'])
+        ClusterTestSpec(**self.metadata['clusterSpec'])
+
+        _validate_section(self.setup, 'setup')
+        for node, steps in self.nodes.items():
+            _validate_section(steps, f'nodes.{node}')
+        _validate_section(self.teardown, 'teardown')
+        return self
