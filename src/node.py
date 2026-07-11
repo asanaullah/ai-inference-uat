@@ -271,6 +271,7 @@ def _add_ephemeral_steps(
             'managed_by_label': tc.managed_by_label,
             'test': test.name,
             'node': node,
+            'step_id': sweep_id,
             'node_selector_key': tc.node_selector_key,
             'image': dag_step.image,
             'command': pod_command,
@@ -305,6 +306,19 @@ def _add_ephemeral_steps(
                 'timeout': tc.test_timeout,
             },
             source=[gen_name],
+            node=node,
+            test=test.name,
+        ))
+        selector = f'test={test.name},node={node},step={sweep_id}'
+        steps.append(Step(
+            name=f'cleanup-{test.name}-{sweep_id}',
+            type='command',
+            config={
+                'command': 'delete',
+                'probe': 'none',
+                'onError': 'continue',
+                'selector': selector,
+            },
             node=node,
             test=test.name,
         ))

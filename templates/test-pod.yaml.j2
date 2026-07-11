@@ -8,6 +8,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ managed_by_label }}
     test: {{ test }}
     node: {{ node }}
+    step: {{ step_id }}
 spec:
   nodeSelector:
     {{ node_selector_key }}: {{ node }}

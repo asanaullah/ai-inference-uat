@@ -57,7 +57,7 @@ build/
 │   ├── nodes/
 │   │   ├── <node>/
 │   │   │   ├── 01-<step>.yaml
-│   │   │   ├── 02-<step>.yaml
+│   │   │   ├── 02-cleanup-<step>.sh
 │   │   │   ├── ...
 │   │   │   └── NN-teardown-<test>.sh
 │   │   └── (one directory per node)
@@ -107,10 +107,10 @@ create-builder → build-binaries → [node1-pipeline, node2-pipeline, ...] → 
 Each node pipeline runs the full node-scoped test suite on its target node, pinned via `nodeSelector`. Each step gets its own Tekton task, with the pod manifest embedded directly in the task script.
 
 ```
-run-component-test-runner
+run-component-test-runner → cleanup-component-test-runner
   → deploy-inference-dag
-  → run-inference-pass-fail
-  → run-inference-sweep
+  → run-inference-pass-fail → cleanup-inference-pass-fail
+  → run-inference-sweep → cleanup-inference-sweep
   → teardown-inference
   → (finally) teardown-inference
 ```
@@ -118,8 +118,8 @@ run-component-test-runner
 For each test:
   - Deploy DAG resources marked `persistsThroughSweep` (e.g. a vLLM inference server with its Service).
   - Wait for readiness.
-  - For each non-persistent DAG step, apply a test pod and wait for completion. If the step has a `parameterSweep`, one pod is created per entry. Results write to the PVC.
-  - Tear down the DAG resources for this test (filtered by `test=<name>,node=<node>` labels).
+  - For each non-persistent DAG step, apply a test pod and wait for completion. If the step has a `parameterSweep`, one pod is created per entry. Results write to the PVC. After each ephemeral pod completes, a cleanup step deletes it (filtered by `test=<name>,node=<node>,step=<step_id>` labels) to release resources like GPUs for subsequent steps.
+  - Tear down the persistent DAG resources for this test (filtered by `test=<name>,node=<node>` labels).
 
 DAG teardown also runs in the node pipeline's `finally` block so that resources (e.g. GPU-backed deployments) are cleaned up even if a step fails.
 
@@ -167,6 +167,7 @@ The base path is a cluster-level setting that scopes results to a particular tes
 | ConfigMap → Builder Pod → PVC | A single ConfigMap delivers all Go source to the builder pod. Builder pod provides a persistent compilation environment. PVC makes binaries accessible to any test container. Delivery mechanism is swappable (GitHub pull, custom image) without changing the rest of the pipeline. |
 | DAG resources persist through sweep | Expensive resources (GPU-backed servers) deploy once; the parameter sweep reuses them. |
 | One Tekton task per DAG step | Each non-persistent step gets its own task (not one per test). Sweep iterations each get a separate test pod and task, keeping the Tekton task graph explicit. |
+| Ephemeral pod cleanup after each step | Non-persistent pods are deleted immediately after completion to release resources (e.g. GPUs) for subsequent steps. Each ephemeral pod carries a `step` label for targeted deletion without affecting persistent pods. |
 | Cluster pipeline / node pipeline split | Separates build (once) from execution (per node). Node pipelines scale with cluster size and run in parallel. A single cluster pipeline manages shared resources (builder pod, aggregation). |
 
 ## Constraints

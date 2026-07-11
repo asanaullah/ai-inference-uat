@@ -1,5 +1,6 @@
 <!-- Assisted by Claude Opus 4.6 -->
 # AI Inference UAT Harness
+A declarative test harness that generates Kubernetes manifests from test definitions. Given a set of target nodes and a test suite, the generator produces both manually-executable manifests, as well as Tekton pipeline manifests for automated execution on OpenShift.
 
 ## Table of Contents
 
@@ -28,13 +29,8 @@
 - [Admin Usage](#admin-usage)
 - [Project Structure](#project-structure)
 
-A declarative test harness that generates Kubernetes manifests from test definitions. Given a set of target nodes and a test suite, the generator produces both manually-executable manifests, as well as Tekton pipeline manifests for automated execution on OpenShift.
 
-```
-                                                          +-> Manual Manifests
-Test Definitions (YAML + Go) + Node List -> python -m src +                     -> OpenShift Execution -> Results on PVC
-                                                          +-> Tekton Manifests
-```
+
 
 ## How It Works
 
@@ -45,6 +41,13 @@ The generator reads test definitions (YAML + Go source), a cluster config descri
 - **Tekton output** (`build/tekton/`) — self-contained Tekton Tasks, Pipelines, and a PipelineRun. Pod manifests are embedded directly in task scripts. Apply the entire directory to run the full suite automatically.
 
 Both outputs are generated from the same ordered step list to ensure they produce identical Kubernetes resources.
+
+
+```
+                                                          +-> Manual Manifests
+Test Definitions (YAML + Go) + Node List -> python -m src +                     -> OpenShift Execution -> Results on PVC
+                                                          +-> Tekton Manifests
+```
 
 ### Three-Layer Architecture
 
@@ -68,8 +71,8 @@ Each node pipeline runs the full test suite on its target node, pinned via `node
 
 ```
 deploy persistent DAG pods (e.g. inference server)
-  -> run test pods (one per sweep entry)
-  -> teardown DAG pods for this test
+  -> run ephemeral test pod -> cleanup ephemeral pod (per sweep entry)
+  -> teardown persistent DAG pods for this test
   -> repeat for next test
 ```
 
@@ -289,7 +292,7 @@ The generator compiles `my-test.go` into a binary and produces manifests that ru
 
 ### DAG Steps
 
-Each test defines an ordered DAG of resources to deploy and run. Steps are either **persistent** (stay up for all sweep entries) or **ephemeral** (run once per sweep entry and exit).
+Each test defines an ordered DAG of resources to deploy and run. Steps are either **persistent** (stay up for all sweep entries) or **ephemeral** (run once per sweep entry and exit). Ephemeral pods are cleaned up immediately after completion to release resources (e.g. GPUs) for subsequent steps. Each ephemeral pod carries a `step` label matching its sweep entry ID, enabling targeted deletion without affecting persistent pods. Persistent pods are torn down after all sweep entries complete.
 
 | Field | Description |
 |---|---|

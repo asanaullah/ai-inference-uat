@@ -2,6 +2,11 @@
 # Assisted by Claude Opus 4.6
 set -e
 
+export HOME=/tmp
+export GOCACHE=/tmp/go-cache
+export GOPATH=/tmp/gopath
+export PATH="$PATH:$GOPATH/bin"
+
 cp /src/cluster.yaml /workspace/cluster.yaml
 echo "Copied cluster.yaml to workspace"
 
