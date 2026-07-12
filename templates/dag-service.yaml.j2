@@ -9,6 +9,9 @@ metadata:
     test: {{ test }}
     node: {{ node }}
 spec:
+{% if headless %}
+  clusterIP: None
+{% endif %}
   selector:
     app.kubernetes.io/managed-by: {{ managed_by_label }}
     test: {{ test }}

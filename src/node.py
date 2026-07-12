@@ -190,6 +190,7 @@ def _add_persistent_steps(
             "node": node,
             "test": test.name,
             "managed_by_label": tc.managed_by_label,
+            "headless": dag_step.service.headless,
         }
         svc_content = render_manifest(jinja_env, "dag-service.yaml.j2", svc_ctx)
         content = content + "\n---\n" + svc_content

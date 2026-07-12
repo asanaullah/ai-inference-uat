@@ -147,6 +147,7 @@ class TestTestDefinition:
         assert d.persists_through_sweep is False
         assert d.privileged is False
         assert d.service.enabled is False
+        assert d.service.headless is True
         assert d.parameter_sweep is None
 
     def test_dag_with_sweep(self):

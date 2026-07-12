@@ -103,6 +103,7 @@ class ServiceConfig(BaseModel):
     enabled: bool = False
     port: int = 8000
     name: str = ""
+    headless: bool = True
 
 
 class CommandConfig(BaseModel):

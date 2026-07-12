@@ -26,6 +26,7 @@ spec:
         enabled: true
         port: 8000
         name: vllm-server
+        headless: true
       command:
         args:
           - python
