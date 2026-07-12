@@ -66,7 +66,6 @@ build/
 │       ├── aggregate.sh
 │       └── cleanup.sh
 └── tekton/
-    ├── configmap.yaml
     ├── cluster-pipeline.yaml
     ├── node-pipeline-<node>.yaml  (one per node)
     ├── task-*.yaml
