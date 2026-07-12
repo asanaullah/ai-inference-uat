@@ -124,7 +124,6 @@ class TestClusterTest:
         assert ns.component_validation.sanity.model_extra["gpuModel"] == "A100"
 
 
-
 # -- Test / DAGStep -----------------------------------------------------------
 
 
