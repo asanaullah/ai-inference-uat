@@ -29,6 +29,8 @@ class ToolConfig(BaseModel):
     aggregator_timeout: str = Field("120s", alias="aggregatorTimeout")
     deploy_timeout: str = Field("600s", alias="deployTimeout")
     test_timeout: str = Field("600s", alias="testTimeout")
+    pipeline_timeout: str = Field("2h", alias="pipelineTimeout")
+    finally_timeout: str = Field("15m", alias="finallyTimeout")
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +89,6 @@ class ClusterTestSpec(BaseModel):
     nodes: list[NodeSpec]
     namespace: str
     storage: StorageConfig
-    timeout: str = "2h"
 
 
 class ClusterTest(BaseModel):

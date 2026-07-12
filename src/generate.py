@@ -735,7 +735,8 @@ def write_tekton(
         {
             "namespace": cs.namespace,
             "managed_by_label": tc.managed_by_label,
-            "timeout": cs.timeout,
+            "timeout": tc.pipeline_timeout,
+            "finally_timeout": tc.finally_timeout,
         },
     )
     (tekton_dir / "pipelinerun.yaml").write_text(pipelinerun)

@@ -62,5 +62,3 @@ spec:
   storage:
     pvc: coldpress-project-storage
     basePath: uat/results
-
-  timeout: 2h

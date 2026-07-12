@@ -132,7 +132,6 @@ Every parsed config field and where it takes effect. **This is the section to ch
 | `spec.namespace` | `ClusterTestSpec.namespace` | Kubernetes namespace for all generated resources |
 | `spec.storage.pvc` | `StorageConfig.pvc` | PVC name mounted on all pods (via `subPath` — see PVC Directory Hierarchy) |
 | `spec.storage.basePath` | `StorageConfig.base_path` | Root of the directory hierarchy on the PVC: `<basePath>/<timestamp>/node/<node>/<test>/<dag>/`. See PVC Directory Hierarchy |
-| `spec.timeout` | `ClusterTestSpec.timeout` | Sets `spec.timeouts.pipeline` on the PipelineRun manifest (e.g. `2h`) |
 
 ### Test (`<suite-dir>/<test>.yaml`)
 
@@ -170,6 +169,8 @@ Every parsed config field and where it takes effect. **This is the section to ch
 | `aggregatorTimeout` | `ToolConfig.aggregator_timeout` | Timeout for aggregator pod readiness probe (default `120s`) |
 | `deployTimeout` | `ToolConfig.deploy_timeout` | Timeout for DAG pod readiness probes (default `600s`) |
 | `testTimeout` | `ToolConfig.test_timeout` | Timeout for test pod completion polling (default `600s`) |
+| `pipelineTimeout` | `ToolConfig.pipeline_timeout` | Sets `spec.timeouts.pipeline` on the PipelineRun manifest (default `2h`) |
+| `finallyTimeout` | `ToolConfig.finally_timeout` | Sets `spec.timeouts.finally` on the PipelineRun manifest — reserves time for aggregation and cleanup after pipeline timeout (default `15m`) |
 
 ## Timestamp Flow (Critical Path)
 
@@ -335,7 +336,8 @@ finally:
 ### PipelineRun
 
 - Uses `generateName: uat-cluster-run-` (auto-generated unique name per run)
-- Sets `spec.timeouts.pipeline` from `cluster.spec.timeout` (e.g. `2h`)
+- Sets `spec.timeouts.pipeline` from `config.yaml`'s `pipelineTimeout` (default `2h`)
+- Sets `spec.timeouts.finally` from `config.yaml`'s `finallyTimeout` (default `15m`) — reserves time for aggregation and cleanup so they run even if the pipeline times out
 - The generated name becomes the `$(context.pipelineRun.name)` value that flows through the timestamp chain
 
 ## Jinja2 Template Engine
@@ -446,9 +448,9 @@ main()
 | `Test` | `<test>.yaml` | `spec.dag[]`, `spec.source`, `spec.serverConfig`, `spec.requirements` |
 | `DAGStep` | nested in `Test` | `name`, `type`, `image`, `command`, `env`, `service`, `persistsThroughSweep`, `parameterSweep`, `labelFilter`, `resources`, `volumeMounts`, `volumes`, `privileged` |
 | `ParameterSweep` | nested in `DAGStep` | `baseCommand.{args,flags}`, `entries[].{id,description,flags}` |
-| `ClusterTest` | `cluster/*.yaml` | `spec.nodes[]`, `spec.namespace`, `spec.storage.{pvc,basePath}`, `spec.timeout` |
+| `ClusterTest` | `cluster/*.yaml` | `spec.nodes[]`, `spec.namespace`, `spec.storage.{pvc,basePath}` |
 | `NodeSpec` | nested in `ClusterTest` | `name`, `componentValidation.sanity.gpuCount` (typed), all others via `extra="allow"` |
-| `ToolConfig` | `config.yaml` | `oseCLIImage`, `builderImage`, `aggregatorImage`, `configmapName`, `builderPodName`, `aggregatorPodName`, `nodeSelectorKey`, `managedByLabel`, `builderTimeout`, `aggregatorTimeout`, `deployTimeout`, `testTimeout` |
+| `ToolConfig` | `config.yaml` | `oseCLIImage`, `builderImage`, `aggregatorImage`, `configmapName`, `builderPodName`, `aggregatorPodName`, `nodeSelectorKey`, `managedByLabel`, `builderTimeout`, `aggregatorTimeout`, `deployTimeout`, `testTimeout`, `pipelineTimeout`, `finallyTimeout` |
 | `LoadedTest` | (dataclass) | `spec: TestSpec`, `go_source`, `go_mod`, `go_sum` |
 | `Step` | (dataclass) | `name`, `type` (`generate` or `command`), `config` (type-specific: `output`/`command`/`probe`/`onError`/`timeout`), `content` (generate only), `source` (command only, references generate step name) |
 

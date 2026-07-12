@@ -70,6 +70,8 @@ class TestToolConfig:
         assert tc.aggregator_timeout == "120s"
         assert tc.deploy_timeout == "600s"
         assert tc.test_timeout == "600s"
+        assert tc.pipeline_timeout == "2h"
+        assert tc.finally_timeout == "15m"
 
     def test_missing_required_field(self):
         with pytest.raises(ValidationError):
@@ -121,9 +123,6 @@ class TestClusterTest:
         assert ns.component_validation.sanity.gpu_count == 2
         assert ns.component_validation.sanity.model_extra["gpuModel"] == "A100"
 
-    def test_default_timeout(self):
-        ct = ClusterTest(**{"spec": CLUSTER_SPEC_DATA})
-        assert ct.spec.timeout == "2h"
 
 
 # -- Test / DAGStep -----------------------------------------------------------

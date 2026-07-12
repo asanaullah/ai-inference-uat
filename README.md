@@ -415,7 +415,7 @@ The generator creates a Kubernetes Service alongside the pod. Downstream steps r
 
 ### Cluster Config (`cluster/<name>.yaml`)
 
-Defines target nodes, namespace, storage, and timeout:
+Defines target nodes, namespace, and storage:
 
 ```yaml
 spec:
@@ -430,7 +430,6 @@ spec:
   storage:
     pvc: my-pvc
     basePath: uat/results
-  timeout: 2h
 ```
 
 All fields under `componentValidation` are available in Jinja2 templates. The `sanity.gpuCount` field is used for GPU requirement checks — tests with `requirements.gpu: true` are skipped on nodes with `gpuCount: 0`.
@@ -452,6 +451,8 @@ builderTimeout: 300s
 aggregatorTimeout: 120s
 deployTimeout: 600s
 testTimeout: 600s
+pipelineTimeout: 2h
+finallyTimeout: 15m
 ```
 
 ## Extensibility
