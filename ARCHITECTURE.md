@@ -173,4 +173,4 @@ The base path is a cluster-level setting that scopes results to a particular tes
 ## Constraints
 
 - **One cluster pipeline per namespace**: the builder pod has a fixed name, so only one cluster pipeline can run at a time in a given namespace. This is typically sufficient — the node pipelines are the element that scales with cluster size, and a single cluster pipeline fans out to all target nodes in parallel.
-- **Sequential sweeps**: parameter sweep entries within a test run as separate pods in sequence — a failure in one aborts the rest of that test's sweep on that node.
+- **Sequential sweeps**: parameter sweep entries within a test run as separate pods in sequence. By default (`stopOnFailure: false`), a failure in one entry does not abort the rest — the remaining sweep entries still run. In Tekton, this is implemented via `onError: continue` on test steps. In manual mode, scripts are independent and the operator controls whether to proceed. Set `stopOnFailure: true` in `test_suite.yaml` to abort the pipeline on first failure.

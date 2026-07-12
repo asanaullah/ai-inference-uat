@@ -149,8 +149,9 @@ DAG pods also get a second mount at `/binaries` for access to compiled test bina
 
 - Python 3.10+
 - An OpenShift cluster with `oc` configured
-- A PVC accessible from the target namespace
+- A PVC with **ReadWriteMany (RWX)** access mode (e.g. CephFS, NFS). Multi-node runs pin pods to different nodes that share one PVC — RWO block storage will fail at scheduling.
 - Nodes labeled with `kubernetes.io/hostname`
+- For Tekton: a service account with permissions to create/delete pods, services, configmaps, and exec into pods in the target namespace
 
 ### Install
 

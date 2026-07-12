@@ -16,6 +16,8 @@ src/                     ← Python package (run with python -m src)
   node.py                ← node-level step computation, DAG/test pod rendering,
   │                         node pipeline + task generation, requirement checks
   models.py              ← Pydantic schemas + dataclasses (no internal deps)
+  steps_io.py            ← intermediate DAG serialization (write_steps) and
+  │                         loading (load_steps) for steps.json round-tripping
 scripts/
   aggregate.py           ← JUnit XML aggregation script (deployed via ConfigMap)
 templates/
@@ -23,7 +25,7 @@ templates/
   *.sh.j2                ← Jinja2 templates for shell scripts
 ```
 
-**Dependency graph:** `generate.py` → `common.py`, `node.py`. `node.py` → `common.py`. `common.py` → `models.py`. `models.py` has no internal deps.
+**Dependency graph:** `generate.py` → `common.py`, `node.py`, `steps_io.py`. `node.py` → `common.py`. `steps_io.py` → `models.py`. `common.py` → `models.py`. `models.py` has no internal deps.
 
 ## Three-Layer Architecture
 
