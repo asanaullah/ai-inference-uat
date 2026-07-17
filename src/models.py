@@ -1,10 +1,8 @@
 # Assisted by Claude Opus 4.6
 """Pydantic schemas and dataclasses for the UAT test harness."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -28,7 +26,7 @@ class ToolConfig(BaseModel):
     builder_timeout: str = Field("300s", alias="builderTimeout")
     aggregator_timeout: str = Field("120s", alias="aggregatorTimeout")
     deploy_timeout: str = Field("600s", alias="deployTimeout")
-    test_timeout: str = Field("600s", alias="testTimeout")
+    default_test_timeout: str = Field("600s", alias="defaultTestTimeout")
     pipeline_timeout: str = Field("2h", alias="pipelineTimeout")
     finally_timeout: str = Field("15m", alias="finallyTimeout")
 
@@ -38,20 +36,18 @@ class ToolConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ExecutionConfig(BaseModel):
+class TestEntry(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    stop_on_failure: bool = Field(False, alias="stopOnFailure")
-
-
-class TestCategories(BaseModel):
-    node: list[str] = []
-    cluster: list[str] = []
-    project: list[str] = []
+    name: str
+    scope: Literal["node", "cluster", "project"]
+    on_failure: Literal["continue", "skipTest", "abort"] = Field(
+        "continue", alias="onFailure"
+    )
+    timeout: Optional[str] = None
 
 
 class TestSuiteSpec(BaseModel):
-    tests: TestCategories
-    execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    tests: list[TestEntry]
 
 
 class TestSuite(BaseModel):
@@ -131,7 +127,6 @@ class TestRequirements(BaseModel):
 class DAGStep(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     name: str
-    type: str = "pod"
     image: str
     command: Optional[CommandConfig] = None
     env: list[dict[str, Any]] = []
@@ -145,7 +140,6 @@ class DAGStep(BaseModel):
     parameter_sweep: Optional[ParameterSweep] = Field(None, alias="parameterSweep")
     label_filter: Optional[str] = Field(None, alias="labelFilter")
     privileged: bool = False
-    depends_on: list[str] = Field(default=[], alias="dependsOn")
 
 
 class TestSource(BaseModel):
@@ -179,6 +173,10 @@ class LoadedTest:
     go_source: str
     go_mod: str
     go_sum: str
+    on_failure: str = "continue"
+    timeout: Optional[str] = None
+    test_id: str = ""
+    scope: str = "node"
 
 
 @dataclass
@@ -190,6 +188,11 @@ class Step:
     source: list[str] = field(default_factory=list)
     node: str = ""
     test: str = ""
+    test_id: str = ""
+    on_failure: str = ""
+    finally_step: bool = False
+    scope: str = ""
+    phase: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -201,22 +204,25 @@ _VALID_PROBES = {"none", "wait-ready", "poll-completed"}
 
 
 def _validate_section(steps: list[dict[str, Any]], section: str) -> None:
-    names: set[str] = set()
     gen_names: set[str] = set()
+    pod_names: set[str] = set()
     for s in steps:
         name = s.get("name", "")
         stype = s.get("type", "")
 
         if not name:
             raise ValueError(f"Step in {section} missing 'name'")
-        if name in names:
-            raise ValueError(f"Duplicate step name '{name}' in {section}")
-        names.add(name)
 
         if stype not in ("generate", "command"):
             raise ValueError(f"Step '{name}' in {section} has invalid type '{stype}'")
 
         config = s.get("config", {})
+        pod_name = config.get("pod_name")
+        if pod_name:
+            if pod_name in pod_names:
+                raise ValueError(f"Duplicate pod name '{pod_name}' in {section}")
+            pod_names.add(pod_name)
+
         if stype == "generate":
             gen_names.add(name)
             if not s.get("content"):
@@ -248,22 +254,60 @@ def _validate_section(steps: list[dict[str, Any]], section: str) -> None:
                     )
 
 
+def _validate_on_error(steps: list[dict[str, Any]]) -> None:
+    for s in steps:
+        if s.get("type") != "command":
+            continue
+        config = s.get("config", {})
+        test = s.get("test", "")
+        finally_step = s.get("finally_step", False)
+        on_failure = s.get("on_failure", "")
+        has_on_error = "onError" in config
+
+        if finally_step and test:
+            if has_on_error:
+                raise ValueError(
+                    f"Step '{s.get('name')}' is a per-test finally step "
+                    f"and must not have onError"
+                )
+        elif finally_step and not test:
+            if not has_on_error or config["onError"] != "continue":
+                raise ValueError(
+                    f"Step '{s.get('name')}' is a global finally step "
+                    f"and must have onError=continue"
+                )
+        elif test and on_failure == "continue":
+            if not has_on_error or config["onError"] != "continue":
+                raise ValueError(
+                    f"Step '{s.get('name')}' has on_failure=continue "
+                    f"and must have onError=continue"
+                )
+        elif test and on_failure != "continue":
+            if not has_on_error or config["onError"] != "stopAndFail":
+                raise ValueError(
+                    f"Step '{s.get('name')}' has on_failure={on_failure} "
+                    f"and must have onError=stopAndFail"
+                )
+        elif not test and not finally_step:
+            if not has_on_error or config["onError"] != "stopAndFail":
+                raise ValueError(
+                    f"Step '{s.get('name')}' is a setup step "
+                    f"and must have onError=stopAndFail"
+                )
+
+
 class StepsFile(BaseModel):
     metadata: dict[str, Any]
-    setup: list[dict[str, Any]]
-    nodes: dict[str, list[dict[str, Any]]]
-    teardown: list[dict[str, Any]]
+    steps: list[dict[str, Any]]
 
     @model_validator(mode="after")
     def validate_structure(self) -> "StepsFile":
-        for key in ("toolConfig", "clusterSpec", "stopOnFailure"):
+        for key in ("toolConfig", "clusterSpec"):
             if key not in self.metadata:
                 raise ValueError(f"metadata missing required key '{key}'")
         ToolConfig(**self.metadata["toolConfig"])
         ClusterTestSpec(**self.metadata["clusterSpec"])
 
-        _validate_section(self.setup, "setup")
-        for node, steps in self.nodes.items():
-            _validate_section(steps, f"nodes.{node}")
-        _validate_section(self.teardown, "teardown")
+        _validate_section(self.steps, "steps")
+        _validate_on_error(self.steps)
         return self

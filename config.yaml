@@ -10,6 +10,6 @@ managedByLabel: uat-generator
 builderTimeout: 300s
 aggregatorTimeout: 120s
 deployTimeout: 600s
-testTimeout: 600s
+defaultTestTimeout: 600s
 pipelineTimeout: 2h
 finallyTimeout: 15m

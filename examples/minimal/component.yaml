@@ -16,7 +16,6 @@ spec:
 
   dag:
     - name: test-runner
-      type: pod
       image: registry.redhat.io/ubi9/ubi:latest
       labelFilter: pass-fail
       resources:

@@ -1,8 +1,6 @@
 # Assisted by Claude Opus 4.6
 """Node-level step computation, DAG/test pod rendering, and requirement checks."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from jinja2 import Environment
@@ -19,89 +17,103 @@ def node_meets_requirements(requirements: Any, node_spec: NodeSpec) -> bool:
 
 def compute_node_steps(
     node_spec: NodeSpec,
-    tests: list[LoadedTest],
+    test: LoadedTest,
     tool_config: ToolConfig,
     namespace: str,
     pvc: str,
     base_path: str,
     jinja_env: Environment,
-    stop_on_failure: bool,
 ) -> list[Step]:
+    # Called once per node — the DAG traversal and template rendering are
+    # identical each time, but the output differs: node name is baked into pod
+    # names, labels, selectors, and PVC subpaths, producing distinct manifests
+    # that can't be shared across nodes.
     steps: list[Step] = []
     node = node_spec.name
     node_spec_dict = node_spec.model_dump(by_alias=True)
 
-    for test in tests:
-        if not node_meets_requirements(test.spec.requirements, node_spec):
-            print(f"  Skipping {test.name} on {node} (requirements not met)")
-            continue
+    if not node_meets_requirements(test.spec.requirements, node_spec):
+        print(f"  Skipping {test.name} on {node} (requirements not met)")
+        return steps
 
-        services: dict[str, dict[str, Any]] = {}
-        has_persistent = False
-        on_error = "continue" if not stop_on_failure else "stop"
+    services: dict[str, dict[str, Any]] = {}
+    has_persistent = False
 
-        for dag_step in test.spec.dag:
-            if dag_step.persists_through_sweep:
-                has_persistent = True
-                _add_persistent_steps(
-                    steps,
-                    dag_step,
-                    node,
-                    test,
-                    tool_config,
-                    namespace,
-                    pvc,
-                    base_path,
-                    node_spec_dict,
-                    services,
-                    jinja_env,
+    for dag_step in test.spec.dag:
+        if dag_step.persists_through_sweep:
+            if dag_step.parameter_sweep is not None:
+                raise ValueError(
+                    f"DAG step '{dag_step.name}' in test '{test.name}' has "
+                    f"both persistsThroughSweep and parameterSweep set — "
+                    f"parameterSweep is only valid on non-persistent steps"
                 )
-            else:
-                _add_ephemeral_steps(
-                    steps,
-                    dag_step,
-                    node,
-                    test,
-                    tool_config,
-                    namespace,
-                    pvc,
-                    base_path,
-                    node_spec_dict,
-                    services,
-                    jinja_env,
-                    on_error,
-                )
-
-        if has_persistent:
-            selector = f"test={test.name},node={node}"
-            steps.append(
-                Step(
-                    name=f"teardown-{test.name}",
-                    type="command",
-                    config={
-                        "command": "delete",
-                        "probe": "none",
-                        "onError": "stop",
-                        "selector": selector,
-                    },
-                    node=node,
-                    test=test.name,
-                )
+            has_persistent = True
+            _add_persistent_steps(
+                steps,
+                dag_step,
+                node,
+                test,
+                tool_config,
+                namespace,
+                pvc,
+                base_path,
+                node_spec_dict,
+                services,
+                jinja_env,
             )
-            steps.append(
-                Step(
-                    name=f"finally-teardown-{test.name}",
-                    type="command",
-                    config={
-                        "command": "delete",
-                        "probe": "none",
-                        "onError": "run",
-                        "selector": selector,
-                    },
-                    node=node,
-                    test=test.name,
-                )
+        else:
+            _add_ephemeral_steps(
+                steps,
+                dag_step,
+                node,
+                test,
+                tool_config,
+                namespace,
+                pvc,
+                base_path,
+                node_spec_dict,
+                services,
+                jinja_env,
             )
+
+    step_prefix = f"{test.test_id}-{test.name}-{node}"
+    selector = f"test={test.name},node={node}"
+    if has_persistent:
+        steps.append(
+            Step(
+                name=f"{step_prefix}-teardown",
+                type="command",
+                config={
+                    "command": "delete",
+                    "probe": "none",
+                    "selector": selector,
+                },
+                node=node,
+                test=test.name,
+                test_id=test.test_id,
+                on_failure=test.on_failure,
+                scope="node",
+                phase="test",
+            )
+        )
+    steps.append(
+        Step(
+            name=f"{step_prefix}-finally-teardown",
+            type="command",
+            config={
+                "command": "delete",
+                "probe": "none",
+                "selector": selector,
+            },
+            node=node,
+            test=test.name,
+            test_id=test.test_id,
+            on_failure=test.on_failure,
+            finally_step=True,
+            scope="node",
+            phase="test",
+        )
+    )
 
     return steps
 
@@ -124,12 +136,15 @@ def _add_persistent_steps(
     services: dict,
     jinja_env: Environment,
 ) -> None:
-    pod_name = f"{node}-{dag_step.name}"
+    step_prefix = f"{test.test_id}-{test.name}-{node}"
+    step_name = f"{step_prefix}-{dag_step.name}"
+    pod_name = step_name
 
     render_ctx = {
         "timestamp": "__TIMESTAMP__",
         "node": node,
         "serverConfig": test.spec.server_config,
+        "services": services,
         "nodeSpec": node_spec_dict,
     }
 
@@ -141,22 +156,20 @@ def _add_persistent_steps(
 
     env = _render_env(dag_step.env, render_ctx, jinja_env)
     resources = (
-        _render_resources(dag_step.resources, {"nodeSpec": node_spec_dict}, jinja_env)
+        _render_resources(dag_step.resources, render_ctx, jinja_env)
         if dag_step.resources
         else None
     )
 
     if dag_step.service.enabled:
-        svc_name = f"{node}-{dag_step.service.name}"
+        svc_name = f"svc-{step_prefix}-{dag_step.service.name}"
         services[dag_step.service.name] = {
             "url": f"http://{svc_name}:{dag_step.service.port}",
             "name": svc_name,
             "port": dag_step.service.port,
         }
 
-    workspace_subpath = (
-        f"{base_path}/__TIMESTAMP__/node/{node}/{test.name}/{dag_step.name}"
-    )
+    workspace_subpath = f"{base_path}/__TIMESTAMP__/{step_name}"
     binaries_subpath = f"{base_path}/__TIMESTAMP__/binaries"
 
     pod_ctx = {
@@ -165,6 +178,7 @@ def _add_persistent_steps(
         "managed_by_label": tc.managed_by_label,
         "test": test.name,
         "node": node,
+        "dag_step_name": dag_step.name,
         "node_selector_key": tc.node_selector_key,
         "image": dag_step.image,
         "command": command,
@@ -189,37 +203,48 @@ def _add_persistent_steps(
             "namespace": namespace,
             "node": node,
             "test": test.name,
+            "dag_step_name": dag_step.name,
             "managed_by_label": tc.managed_by_label,
             "headless": dag_step.service.headless,
         }
         svc_content = render_manifest(jinja_env, "dag-service.yaml.j2", svc_ctx)
         content = content + "\n---\n" + svc_content
 
-    gen_name = f"{node}-{dag_step.name}"
+    gen_config = {"output": "manifest"}
+    if dag_step.service.enabled:
+        gen_config["service_name"] = svc_name
+
     steps.append(
         Step(
-            name=gen_name,
+            name=step_name,
             type="generate",
-            config={"output": "manifest", "onError": "stop"},
+            config=gen_config,
             content=content,
             node=node,
             test=test.name,
+            test_id=test.test_id,
+            on_failure=test.on_failure,
+            scope="node",
+            phase="test",
         )
     )
     steps.append(
         Step(
-            name=f"deploy-{dag_step.name}",
+            name=step_name,
             type="command",
             config={
                 "command": "apply",
                 "probe": "wait-ready",
-                "onError": "stop",
                 "pod_name": pod_name,
                 "timeout": tc.deploy_timeout,
             },
-            source=[gen_name],
+            source=[step_name],
             node=node,
             test=test.name,
+            test_id=test.test_id,
+            on_failure=test.on_failure,
+            scope="node",
+            phase="test",
         )
     )
 
@@ -236,9 +261,20 @@ def _add_ephemeral_steps(
     node_spec_dict: dict,
     services: dict,
     jinja_env: Environment,
-    on_error: str,
 ) -> None:
-    if dag_step.parameter_sweep:
+    step_prefix = f"{test.test_id}-{test.name}-{node}"
+    has_sweep = dag_step.parameter_sweep is not None
+
+    svc_name = ""
+    if dag_step.service.enabled:
+        svc_name = f"svc-{step_prefix}-{dag_step.service.name}"
+        services[dag_step.service.name] = {
+            "url": f"http://{svc_name}:{dag_step.service.port}",
+            "name": svc_name,
+            "port": dag_step.service.port,
+        }
+
+    if has_sweep:
         entries = [
             (
                 e.id,
@@ -251,10 +287,16 @@ def _add_ephemeral_steps(
         entries = [(dag_step.name, "", {})]
 
     for sweep_id, _sweep_desc, sweep_flags in entries:
+        if has_sweep:
+            step_name = f"{step_prefix}-{dag_step.name}-{sweep_id}"
+            cleanup_name = f"{step_prefix}-cleanup-{dag_step.name}-{sweep_id}"
+        else:
+            step_name = f"{step_prefix}-{dag_step.name}"
+            cleanup_name = f"{step_prefix}-cleanup-{dag_step.name}"
+
+        pod_name = step_name
         param_sweep: dict[str, Any] = {"id": sweep_id}
-        workspace_subpath = (
-            f"{base_path}/__TIMESTAMP__/node/{node}/{test.name}/{sweep_id}"
-        )
+        workspace_subpath = f"{base_path}/__TIMESTAMP__/{step_name}"
         binaries_subpath = f"{base_path}/__TIMESTAMP__/binaries"
 
         render_ctx: dict[str, Any] = {
@@ -265,7 +307,7 @@ def _add_ephemeral_steps(
             "nodeSpec": node_spec_dict,
         }
 
-        if dag_step.parameter_sweep:
+        if has_sweep:
             args = dag_step.parameter_sweep.base_command.args
             sweep_cmd = build_command(args, sweep_flags)
             sweep_cmd = [
@@ -283,7 +325,7 @@ def _add_ephemeral_steps(
                 "--ginkgo.junit-report=/workspace/junit.xml",
             ]
         elif dag_step.command:
-            if dag_step.parameter_sweep:
+            if has_sweep:
                 pod_command = build_command(
                     dag_step.parameter_sweep.base_command.args,
                     sweep_flags,
@@ -311,18 +353,19 @@ def _add_ephemeral_steps(
             else None
         )
 
-        pod_name = f"{node}-test-{test.name}-{sweep_id}"
         pod_ctx = {
             "pod_name": pod_name,
             "namespace": namespace,
             "managed_by_label": tc.managed_by_label,
             "test": test.name,
             "node": node,
-            "step_id": sweep_id,
+            "sweep_id": sweep_id,
+            "dag_step_name": dag_step.name,
             "node_selector_key": tc.node_selector_key,
             "image": dag_step.image,
             "command": pod_command,
             "env": env,
+            "ports": dag_step.ports,
             "resources": resources,
             "volume_mounts": dag_step.volume_mounts,
             "volumes": dag_step.volumes,
@@ -333,46 +376,75 @@ def _add_ephemeral_steps(
         }
         content = render_manifest(jinja_env, "test-pod.yaml.j2", pod_ctx)
 
-        gen_name = f"{node}-{test.name}-{sweep_id}"
+        if dag_step.service.enabled:
+            svc_ctx = {
+                "service_name": svc_name,
+                "pod_name": "",
+                "port": dag_step.service.port,
+                "namespace": namespace,
+                "node": node,
+                "test": test.name,
+                "dag_step_name": dag_step.name,
+                "managed_by_label": tc.managed_by_label,
+                "headless": dag_step.service.headless,
+                "sweep_id": sweep_id,
+            }
+            svc_content = render_manifest(jinja_env, "dag-service.yaml.j2", svc_ctx)
+            content = content + "\n---\n" + svc_content
+
+        gen_config: dict[str, Any] = {"output": "manifest"}
+        if dag_step.service.enabled:
+            gen_config["service_name"] = svc_name
+
         steps.append(
             Step(
-                name=gen_name,
+                name=step_name,
                 type="generate",
-                config={"output": "manifest", "onError": on_error},
+                config=gen_config,
                 content=content,
                 node=node,
                 test=test.name,
+                test_id=test.test_id,
+                on_failure=test.on_failure,
+                scope="node",
+                phase="test",
             )
         )
         steps.append(
             Step(
-                name=f"run-test-{test.name}-{sweep_id}",
+                name=step_name,
                 type="command",
                 config={
                     "command": "apply",
                     "probe": "poll-completed",
-                    "onError": on_error,
                     "pod_name": pod_name,
-                    "timeout": tc.test_timeout,
+                    "timeout": test.timeout or tc.default_test_timeout,
                 },
-                source=[gen_name],
+                source=[step_name],
                 node=node,
                 test=test.name,
+                test_id=test.test_id,
+                on_failure=test.on_failure,
+                scope="node",
+                phase="test",
             )
         )
-        selector = f"test={test.name},node={node},step={sweep_id}"
+        selector = f"test={test.name},node={node},sweep={sweep_id}"
         steps.append(
             Step(
-                name=f"cleanup-{test.name}-{sweep_id}",
+                name=cleanup_name,
                 type="command",
                 config={
                     "command": "delete",
                     "probe": "none",
-                    "onError": "continue",
                     "selector": selector,
                 },
                 node=node,
                 test=test.name,
+                test_id=test.test_id,
+                on_failure=test.on_failure,
+                scope="node",
+                phase="test",
             )
         )
 

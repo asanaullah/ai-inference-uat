@@ -7,11 +7,16 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: {{ managed_by_label }}
     test: {{ test }}
+    dag-step: {{ dag_step_name }}
+{% if node %}
     node: {{ node }}
-    step: {{ step_id }}
+{% endif %}
+    sweep: {{ sweep_id }}
 spec:
+{% if node %}
   nodeSelector:
     {{ node_selector_key }}: {{ node }}
+{% endif %}
 {% if privileged %}
   hostPID: true
 {% endif %}
@@ -30,6 +35,10 @@ spec:
         - name: {{ e.name }}
           value: {{ e.value | yaml_quote }}
 {% endfor %}
+{% endif %}
+{% if ports %}
+      ports:
+{{ ports | to_yaml | indent(8, first=True) }}
 {% endif %}
 {% if resources %}
       resources:

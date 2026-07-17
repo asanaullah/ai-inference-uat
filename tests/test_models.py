@@ -69,7 +69,7 @@ class TestToolConfig:
         assert tc.builder_timeout == "300s"
         assert tc.aggregator_timeout == "120s"
         assert tc.deploy_timeout == "600s"
-        assert tc.test_timeout == "600s"
+        assert tc.default_test_timeout == "600s"
         assert tc.pipeline_timeout == "2h"
         assert tc.finally_timeout == "15m"
 
@@ -85,16 +85,41 @@ class TestToolConfig:
 
 class TestTestSuite:
     def test_minimal(self):
-        ts = TestSuite(**{"spec": {"tests": {"node": ["a"]}}})
-        assert ts.spec.tests.node == ["a"]
-        assert ts.spec.tests.cluster == []
-        assert ts.spec.execution.stop_on_failure is False
+        ts = TestSuite(**{"spec": {"tests": [{"name": "a", "scope": "node"}]}})
+        assert ts.spec.tests[0].name == "a"
+        assert ts.spec.tests[0].scope == "node"
+        assert ts.spec.tests[0].on_failure == "continue"
+        assert ts.spec.tests[0].timeout is None
 
-    def test_stop_on_failure(self):
+    def test_timeout_override(self):
         ts = TestSuite(
-            **{"spec": {"tests": {"node": []}, "execution": {"stopOnFailure": True}}}
+            **{
+                "spec": {
+                    "tests": [
+                        {"name": "a", "scope": "node", "timeout": "1200s"},
+                        {"name": "b", "scope": "node"},
+                    ]
+                }
+            }
         )
-        assert ts.spec.execution.stop_on_failure is True
+        assert ts.spec.tests[0].timeout == "1200s"
+        assert ts.spec.tests[1].timeout is None
+
+    def test_on_failure(self):
+        ts = TestSuite(
+            **{
+                "spec": {
+                    "tests": [
+                        {"name": "a", "scope": "node", "onFailure": "abort"},
+                        {"name": "b", "scope": "cluster", "onFailure": "skipTest"},
+                        {"name": "c", "scope": "project"},
+                    ]
+                }
+            }
+        )
+        assert ts.spec.tests[0].on_failure == "abort"
+        assert ts.spec.tests[1].on_failure == "skipTest"
+        assert ts.spec.tests[2].on_failure == "continue"
 
     def test_missing_tests(self):
         with pytest.raises(ValidationError):
@@ -186,9 +211,29 @@ class TestValidateSection:
     def test_valid(self):
         _validate_section([self._gen(), self._cmd()], "s")
 
-    def test_duplicate_name(self):
-        with pytest.raises(ValueError, match="Duplicate"):
-            _validate_section([self._gen(), self._gen()], "s")
+    def test_duplicate_pod_name(self):
+        with pytest.raises(ValueError, match="Duplicate pod name"):
+            _validate_section(
+                [
+                    self._cmd(
+                        name="a",
+                        config={
+                            "command": "apply",
+                            "probe": "wait-ready",
+                            "pod_name": "p",
+                        },
+                    ),
+                    self._cmd(
+                        name="b",
+                        config={
+                            "command": "apply",
+                            "probe": "wait-ready",
+                            "pod_name": "p",
+                        },
+                    ),
+                ],
+                "s",
+            )
 
     def test_missing_name(self):
         with pytest.raises(ValueError, match="missing 'name'"):
@@ -229,24 +274,25 @@ class TestStepsFile:
             "metadata": {
                 "toolConfig": TOOL_CONFIG_DATA,
                 "clusterSpec": CLUSTER_SPEC_DATA,
-                "stopOnFailure": False,
             },
-            "setup": [
+            "steps": [
                 {
                     "name": "cm",
                     "type": "generate",
                     "content": "x",
-                    "config": {"output": "manifest"},
+                    "config": {"output": "manifest", "onError": "stopAndFail"},
                 },
                 {
                     "name": "apply-cm",
                     "type": "command",
                     "source": ["cm"],
-                    "config": {"command": "apply", "probe": "none"},
+                    "config": {
+                        "command": "apply",
+                        "probe": "none",
+                        "onError": "stopAndFail",
+                    },
                 },
             ],
-            "nodes": {},
-            "teardown": [],
         }
 
     def test_valid(self):
@@ -254,8 +300,8 @@ class TestStepsFile:
 
     def test_missing_metadata_key(self):
         data = self._valid_data()
-        del data["metadata"]["stopOnFailure"]
-        with pytest.raises(ValidationError, match="stopOnFailure"):
+        del data["metadata"]["toolConfig"]
+        with pytest.raises(ValidationError, match="toolConfig"):
             StepsFile(**data)
 
     def test_invalid_tool_config_in_metadata(self):

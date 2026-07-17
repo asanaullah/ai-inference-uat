@@ -45,8 +45,13 @@ spec:
   finally:
 {% for task in finally_tasks %}
     - name: {{ task.name }}
+{% if task.ref_type == 'pipeline' %}
+      pipelineRef:
+        name: {{ task.ref_name }}
+{% else %}
       taskRef:
         name: {{ task.ref_name }}
+{% endif %}
 {% if task.params %}
       params:
 {% for p in task.params %}
@@ -59,6 +64,9 @@ spec:
 {% for dep in task.run_after %}
         - {{ dep }}
 {% endfor %}
+{% endif %}
+{% if task.on_error %}
+      onError: {{ task.on_error }}
 {% endif %}
 {% endfor %}
 {% endif %}

@@ -7,6 +7,7 @@ from src.generate import (
     _find_step,
     _render_tekton_task,
     _resolve_manifest,
+    _validate_unique_pod_names,
     compute_setup_steps,
     compute_teardown_steps,
 )
@@ -53,7 +54,9 @@ def _test(name="t"):
         source={"ginkgo": "t.go", "goMod": "go.mod", "goSum": "go.sum"},
         dag=[{"name": "run", "image": "img", "labelFilter": "pass-fail"}],
     )
-    return LoadedTest(name=name, spec=spec, go_source="src", go_mod="mod", go_sum="sum")
+    return LoadedTest(
+        name=name, spec=spec, go_source="src", go_mod="mod", go_sum="sum", test_id="1"
+    )
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -136,9 +139,15 @@ class TestDeriveManualScript:
         )
         assert "oc delete configmap cm --ignore-not-found" in script
 
-    def test_apply_returns_none(self, env):
-        step = Step(name="ap", type="command", config={"command": "apply"})
-        assert _derive_manual_script(step, env) is None
+    def test_apply(self, env):
+        step = Step(
+            name="ap",
+            type="command",
+            config={"command": "apply"},
+            source=["my-manifest"],
+        )
+        script = _derive_manual_script(step, env)
+        assert "oc apply -f manifests/my-manifest.yaml" in script
 
 
 # -- _render_tekton_task ------------------------------------------------------
@@ -222,9 +231,9 @@ class TestComputeSteps:
         )
         names = [s.name for s in steps]
         assert names == [
-            "configmap",
             "apply-configmap",
-            "builder-pod",
+            "apply-configmap",
+            "create-builder",
             "create-builder",
             "build",
         ]
@@ -239,7 +248,9 @@ class TestComputeSteps:
             "examples/minimal",
             "# agg",
         )
-        cm = next(s for s in steps if s.name == "configmap")
+        cm = next(
+            s for s in steps if s.name == "apply-configmap" and s.type == "generate"
+        )
         assert "t_test.go" in cm.content
         assert "build.sh" in cm.content
 
@@ -247,7 +258,7 @@ class TestComputeSteps:
         steps = compute_teardown_steps(tc, cs, env)
         names = [s.name for s in steps]
         assert names == [
-            "aggregator-pod",
+            "create-aggregator",
             "create-aggregator",
             "aggregate",
             "cleanup",
@@ -258,7 +269,52 @@ class TestComputeSteps:
         cleanup = next(s for s in steps if s.name == "cleanup")
         assert cleanup.config["configmap_name"] == "uat-cm"
 
-    def test_teardown_all_on_error_run(self, env, tc, cs):
+    def test_teardown_all_finally_step(self, env, tc, cs):
         steps = compute_teardown_steps(tc, cs, env)
         for s in steps:
-            assert s.config.get("onError") == "run"
+            assert s.finally_step
+            assert "onError" not in s.config
+
+
+class TestValidateUniquePodNames:
+    def test_valid_names_pass(self):
+        steps = [
+            Step(name="a", type="command", config={"pod_name": "my-pod"}),
+            Step(name="b", type="command", config={"pod_name": "1-component-wrk-4"}),
+        ]
+        _validate_unique_pod_names(steps)
+
+    def test_duplicate_raises(self):
+        steps = [
+            Step(name="a", type="command", config={"pod_name": "my-pod"}),
+            Step(name="b", type="command", config={"pod_name": "my-pod"}),
+        ]
+        with pytest.raises(ValueError, match="Duplicate pod name"):
+            _validate_unique_pod_names(steps)
+
+    def test_underscore_rejected(self):
+        steps = [
+            Step(name="a", type="command", config={"pod_name": "1_component_wrk-4"}),
+        ]
+        with pytest.raises(ValueError, match="not a valid RFC 1123"):
+            _validate_unique_pod_names(steps)
+
+    def test_uppercase_rejected(self):
+        steps = [
+            Step(name="a", type="command", config={"pod_name": "My-Pod"}),
+        ]
+        with pytest.raises(ValueError, match="not a valid RFC 1123"):
+            _validate_unique_pod_names(steps)
+
+    def test_trailing_hyphen_rejected(self):
+        steps = [
+            Step(name="a", type="command", config={"pod_name": "my-pod-"}),
+        ]
+        with pytest.raises(ValueError, match="not a valid RFC 1123"):
+            _validate_unique_pod_names(steps)
+
+    def test_no_pod_name_skipped(self):
+        steps = [
+            Step(name="a", type="generate", config={"output": "manifest"}),
+        ]
+        _validate_unique_pod_names(steps)

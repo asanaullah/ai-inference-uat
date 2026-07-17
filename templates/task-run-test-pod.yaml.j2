@@ -18,21 +18,17 @@ spec:
         {{ manifest | indent(8) }}
         MANIFEST_EOF
 
-        echo "Waiting for pod {{ pod_name }} to complete..."
-        while true; do
-          PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
-          case "$PHASE" in
-            Succeeded)
-              echo "Pod {{ pod_name }} completed successfully"
-              exit 0
-              ;;
-            Failed)
-              echo "Pod {{ pod_name }} failed"
-              oc logs {{ pod_name }} --tail=50 || true
-              exit 1
-              ;;
-            *)
-              sleep 5
-              ;;
-          esac
-        done
+        echo "Waiting for pod {{ pod_name }} to complete (timeout: {{ timeout }})..."
+        oc wait --for=jsonpath='{.status.phase}'=Succeeded pod/{{ pod_name }} --timeout={{ timeout }} && {
+          echo "Pod {{ pod_name }} completed successfully"
+          exit 0
+        }
+
+        PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+        if [ "$PHASE" = "Failed" ]; then
+          echo "Pod {{ pod_name }} failed"
+          oc logs {{ pod_name }} --tail=50 || true
+          exit 1
+        fi
+        echo "Pod {{ pod_name }} timed out (phase: $PHASE)"
+        exit 1

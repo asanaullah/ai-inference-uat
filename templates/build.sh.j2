@@ -18,6 +18,7 @@ echo "Building {{ test_name }} test binary..."
 mkdir -p /workspace/{{ test_name }}
 cp /src/{{ test_name }}_test.go /workspace/{{ test_name }}/test_test.go
 cp /src/{{ test_name }}_go.mod /workspace/{{ test_name }}/go.mod
+cp /src/{{ test_name }}_go.sum /workspace/{{ test_name }}/go.sum
 cp /src/cluster.yaml /workspace/{{ test_name }}/cluster.yaml
 cd /workspace/{{ test_name }}
 go mod tidy

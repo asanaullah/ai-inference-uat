@@ -1,8 +1,6 @@
 # Assisted by Claude Opus 4.6
 """Jinja2 engine, manifest validation, config loading, and shared utilities."""
 
-from __future__ import annotations
-
 import json
 import shlex
 from pathlib import Path
@@ -111,8 +109,9 @@ def load_config(
         cluster = ClusterTest(**yaml.safe_load(f))
 
     tests: list[LoadedTest] = []
-    for test_name in suite.spec.tests.node:
-        with open(suite_dir / f"{test_name}.yaml") as f:
+    for i, entry in enumerate(suite.spec.tests, 1):
+        test_id = str(i)
+        with open(suite_dir / f"{entry.name}.yaml") as f:
             test_def = Test(**yaml.safe_load(f))
 
         go_source = (suite_dir / test_def.spec.source.ginkgo).read_text()
@@ -121,11 +120,15 @@ def load_config(
 
         tests.append(
             LoadedTest(
-                name=test_name,
+                name=entry.name,
                 spec=test_def.spec,
                 go_source=go_source,
                 go_mod=go_mod,
                 go_sum=go_sum,
+                on_failure=entry.on_failure,
+                timeout=entry.timeout,
+                test_id=test_id,
+                scope=entry.scope,
             )
         )
 

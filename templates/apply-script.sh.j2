@@ -1,0 +1,54 @@
+#!/bin/bash
+# Assisted by Claude Opus 4.6
+set -e
+{% if probe == "none" %}
+echo "Applying {{ manifest }}..."
+oc apply -f {{ manifest }}
+echo "Applied {{ manifest }}"
+{% elif probe == "wait-ready" %}
+echo "Applying {{ manifest }}..."
+oc apply -f {{ manifest }}
+echo "Waiting for {{ pod_name }} to be ready (timeout: {{ timeout }})..."
+oc wait --for=condition=Ready pod/{{ pod_name }} --timeout={{ timeout }}
+echo "{{ pod_name }} is ready"
+echo "--- {{ pod_name }} recent logs ---"
+oc logs {{ pod_name }} --tail=10 || true
+{% elif probe == "poll-completed" %}
+echo "Applying {{ manifest }}..."
+oc apply -f {{ manifest }}
+
+echo "Waiting for {{ pod_name }} to start..."
+while true; do
+  PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
+  case "$PHASE" in
+    Running|Succeeded|Failed) break ;;
+    *) sleep 2 ;;
+  esac
+done
+
+echo "--- {{ pod_name }} logs ---"
+oc logs -f {{ pod_name }} 2>/dev/null || true
+
+PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+if [ "$PHASE" = "Succeeded" ]; then
+  echo "PASSED: {{ pod_name }}"
+  exit 0
+elif [ "$PHASE" = "Failed" ]; then
+  echo "FAILED: {{ pod_name }} (phase: $PHASE)"
+  exit 1
+fi
+
+echo "Waiting for {{ pod_name }} to complete (timeout: {{ timeout }})..."
+oc wait --for=jsonpath='{.status.phase}'=Succeeded pod/{{ pod_name }} --timeout={{ timeout }} && {
+  echo "PASSED: {{ pod_name }}"
+  exit 0
+}
+
+PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+if [ "$PHASE" = "Failed" ]; then
+  echo "FAILED: {{ pod_name }} (phase: $PHASE)"
+  exit 1
+fi
+echo "TIMEOUT: {{ pod_name }} did not complete within {{ timeout }}"
+exit 1
+{% endif %}

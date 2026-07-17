@@ -32,38 +32,50 @@ def build_dir(tmp_path):
 
 
 class TestOutputStructure:
-    def test_manual_dirs(self, build_dir):
-        assert (build_dir / "manual" / "setup").is_dir()
-        assert (build_dir / "manual" / "teardown").is_dir()
-        for d in (build_dir / "manual" / "nodes").iterdir():
-            assert d.is_dir()
+    def test_manual_layout(self, build_dir):
+        manual = build_dir / "manual"
+        assert manual.is_dir()
+        scripts = [f for f in manual.iterdir() if f.is_file()]
+        assert all(f.suffix == ".sh" for f in scripts)
+        manifests_dir = manual / "manifests"
+        assert manifests_dir.is_dir()
+        manifests = list(manifests_dir.iterdir())
+        assert all(f.suffix == ".yaml" for f in manifests)
 
     def test_tekton_dir(self, build_dir):
         tekton = build_dir / "tekton"
         assert (tekton / "cluster-pipeline.yaml").exists()
         assert (tekton / "pipelinerun.yaml").exists()
-        assert any(f.name.startswith("node-pipeline-") for f in tekton.iterdir())
+        assert any(f.name.startswith("node-") for f in tekton.iterdir())
 
     def test_steps_json(self, build_dir):
         data = json.loads((build_dir / "steps.json").read_text())
         assert "metadata" in data
-        assert "setup" in data
-        assert "nodes" in data
-        assert "teardown" in data
+        assert "steps" in data
+        assert isinstance(data["steps"], list)
+        assert len(data["steps"]) > 0
+        for step in data["steps"]:
+            assert "scope" in step
 
 
 class TestManualOutput:
     def test_setup_files(self, build_dir):
-        setup = build_dir / "manual" / "setup"
-        assert (setup / "configmap.yaml").exists()
-        assert (setup / "builder-pod.yaml").exists()
-        assert (setup / "build.sh").exists()
+        manual = build_dir / "manual"
+        names = [f.name for f in manual.iterdir() if f.is_file()]
+        manifests = [f.name for f in (manual / "manifests").iterdir()]
+        assert "apply-configmap.yaml" in manifests
+        assert "create-builder.yaml" in manifests
+        assert "1-apply-configmap.sh" in names
+        assert "2-create-builder.sh" in names
+        assert "3-build.sh" in names
 
     def test_teardown_files(self, build_dir):
-        td = build_dir / "manual" / "teardown"
-        assert (td / "aggregator-pod.yaml").exists()
-        assert (td / "aggregate.sh").exists()
-        assert (td / "cleanup.sh").exists()
+        manual = build_dir / "manual"
+        names = [f.name for f in manual.iterdir() if f.is_file()]
+        manifests = [f.name for f in (manual / "manifests").iterdir()]
+        assert any("create-aggregator.yaml" in n for n in manifests)
+        assert any("aggregate.sh" in n for n in names)
+        assert any("cleanup.sh" in n for n in names)
 
     def test_no_timestamp_placeholder(self, build_dir):
         for f in (build_dir / "manual").rglob("*"):
@@ -89,6 +101,29 @@ class TestTektonOutput:
         for f in (build_dir / "tekton").glob("*.yaml"):
             content = f.read_text()
             assert "__TIMESTAMP__" not in content, f"Unsubstituted in {f.name}"
+
+    def test_per_test_pipelines(self, build_dir):
+        tekton = build_dir / "tekton"
+        test_pipelines = [f for f in tekton.iterdir() if f.name.startswith("test-")]
+        assert len(test_pipelines) > 0, "No per-test pipeline files generated"
+
+    def test_node_pipeline_uses_pipeline_ref(self, build_dir):
+        tekton = build_dir / "tekton"
+        for f in tekton.glob("node-*.yaml"):
+            doc = yaml.safe_load(f.read_text())
+            tasks = doc["spec"]["tasks"]
+            for task in tasks:
+                assert "pipelineRef" in task, (
+                    f"Node pipeline task {task['name']} uses taskRef instead of pipelineRef"
+                )
+
+    def test_test_pipeline_has_finally(self, build_dir):
+        tekton = build_dir / "tekton"
+        for f in tekton.glob("test-*.yaml"):
+            doc = yaml.safe_load(f.read_text())
+            assert "finally" in doc["spec"], (
+                f"Test pipeline {f.name} missing finally block"
+            )
 
 
 class TestStepsRoundTrip:

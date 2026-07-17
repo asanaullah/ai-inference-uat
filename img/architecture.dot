@@ -25,7 +25,7 @@ digraph architecture {
             </TD></TR>
             <TR><TD ALIGN="LEFT" COLSPAN="2">
                 <FONT POINT-SIZE="11"><B>test_suite.yaml</B></FONT><BR ALIGN="LEFT"/>
-                <FONT POINT-SIZE="10" COLOR="#555">tests by scope (node / cluster / project)</FONT>
+                <FONT POINT-SIZE="10" COLOR="#555">ordered list: name, scope, onFailure</FONT>
             </TD></TR>
             <TR><TD ALIGN="LEFT" COLSPAN="2">
                 <FONT POINT-SIZE="11"><B>&lt;test&gt;.yaml</B> + <B>&lt;test&gt;.go</B></FONT><BR ALIGN="LEFT"/>
@@ -55,7 +55,7 @@ digraph architecture {
             </TD></TR>
             <TR><TD ALIGN="LEFT">
                 <FONT POINT-SIZE="11"><B>config.yaml</B></FONT><BR ALIGN="LEFT"/>
-                <FONT POINT-SIZE="10" COLOR="#555">images, pod names, labels</FONT>
+                <FONT POINT-SIZE="10" COLOR="#555">default timeouts, tool images</FONT>
             </TD></TR>
         </TABLE>
     >]
@@ -72,16 +72,16 @@ digraph architecture {
                BGCOLOR="#e4f3e9" COLOR="#2e944a" STYLE="ROUNDED">
             <TR><TD COLSPAN="7" BGCOLOR="#2e944a" CELLPADDING="12">
                 <FONT COLOR="white" POINT-SIZE="13"><B>python -m src</B></FONT>
-                <FONT COLOR="#b8dfc5" POINT-SIZE="10">  common.py → node.py → generate.py</FONT>
+                <FONT COLOR="#b8dfc5" POINT-SIZE="10">  common.py → node.py / cluster.py / project.py → generate.py → steps_io.py</FONT>
             </TD></TR>
             <TR>
                 <TD BGCOLOR="#c2e4cd">Load &amp;<BR/>Validate<BR/><FONT POINT-SIZE="9" COLOR="#555">Pydantic</FONT></TD>
                 <TD BGCOLOR="#e4f3e9"><FONT POINT-SIZE="16" COLOR="#2e944a">→</FONT></TD>
-                <TD BGCOLOR="#c2e4cd">Compute<BR/>Steps</TD>
+                <TD BGCOLOR="#c2e4cd">Compute<BR/>Steps<BR/><FONT POINT-SIZE="9" COLOR="#555">flat ordered list</FONT></TD>
                 <TD BGCOLOR="#e4f3e9"><FONT POINT-SIZE="16" COLOR="#2e944a">→</FONT></TD>
                 <TD BGCOLOR="#c2e4cd">Render &amp;<BR/>Validate<BR/><FONT POINT-SIZE="9" COLOR="#555">Jinja2 + YAML</FONT></TD>
                 <TD BGCOLOR="#e4f3e9"><FONT POINT-SIZE="16" COLOR="#2e944a">→</FONT></TD>
-                <TD BGCOLOR="#c2e4cd">Write<BR/>Manual &amp;<BR/>Tekton</TD>
+                <TD BGCOLOR="#c2e4cd">Write<BR/>Manual<BR/><FONT POINT-SIZE="9" COLOR="#555">+ Tekton</FONT></TD>
             </TR>
         </TABLE>
     >]
@@ -98,11 +98,12 @@ digraph architecture {
             </TD></TR>
             <TR>
                 <TD BGCOLOR="#e2d0f0"><FONT POINT-SIZE="11"><B>manual/</B></FONT><BR/>
-                    <FONT POINT-SIZE="10" COLOR="#555">setup/, nodes/&lt;node&gt;/, teardown/</FONT><BR/>
-                    <FONT POINT-SIZE="9" COLOR="#888">standalone pods &amp; scripts</FONT>
+                    <FONT POINT-SIZE="10" COLOR="#555">manifests/*.yaml (data)</FONT><BR/>
+                    <FONT POINT-SIZE="10" COLOR="#555">NNN-*.sh scripts (actions)</FONT><BR/>
+                    <FONT POINT-SIZE="9" COLOR="#888">scripts in root, manifests in subdir</FONT>
                 </TD>
                 <TD BGCOLOR="#e2d0f0"><FONT POINT-SIZE="11"><B>tekton/</B></FONT><BR/>
-                    <FONT POINT-SIZE="10" COLOR="#555">pipelines, tasks, configmap</FONT><BR/>
+                    <FONT POINT-SIZE="10" COLOR="#555">pipelines, tasks, pipelinerun</FONT><BR/>
                     <FONT POINT-SIZE="9" COLOR="#888">derived from same step list</FONT>
                 </TD>
             </TR>
@@ -133,130 +134,54 @@ digraph architecture {
             penwidth=1.5
             margin=20
 
-            create_builder [label=<
+            apply_configmap [label=<
                 <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6">
                     <TR><TD><FONT POINT-SIZE="14" COLOR="#996600"><B>1</B></FONT></TD>
+                        <TD><FONT POINT-SIZE="11">  Apply ConfigMap</FONT></TD></TR>
+                </TABLE>>
+                fillcolor="#ffe8b8" color="#cc8a00"]
+            create_builder [label=<
+                <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6">
+                    <TR><TD><FONT POINT-SIZE="14" COLOR="#996600"><B>2</B></FONT></TD>
                         <TD><FONT POINT-SIZE="11">  Create Builder Pod</FONT></TD></TR>
                 </TABLE>>
                 fillcolor="#ffe8b8" color="#cc8a00"]
             build_binaries [label=<
                 <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6">
-                    <TR><TD><FONT POINT-SIZE="14" COLOR="#996600"><B>2</B></FONT></TD>
+                    <TR><TD><FONT POINT-SIZE="14" COLOR="#996600"><B>3</B></FONT></TD>
                         <TD><FONT POINT-SIZE="11">  Build Binaries</FONT></TD></TR>
                 </TABLE>>
                 fillcolor="#ffe8b8" color="#cc8a00"]
 
-            fan_out [shape=diamond width=0.2 height=0.2 fixedsize=true
-                     label="" fillcolor="#cc8a00" color="#cc8a00"]
-
-            subgraph cluster_node_pipes {
-                label=<
-                    <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4">
-                        <TR><TD><FONT POINT-SIZE="14" COLOR="#996600"><B>3</B></FONT></TD>
-                            <TD><FONT POINT-SIZE="12"><B>  Node Pipelines</B></FONT></TD>
-                            <TD><FONT POINT-SIZE="10" COLOR="#888">  ×N nodes, parallel</FONT></TD></TR>
-                    </TABLE>>
-                labeljust=l
-                style="rounded,filled"
-                fillcolor="#fef8e1"
-                color="#b37800"
-                fontname="Helvetica"
-                penwidth=1.5
-                margin=16
-
-                node_pipe_1 [shape=plaintext margin=0 label=<
-                    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" CELLPADDING="10"
-                           WIDTH="200" BGCOLOR="#fdf0c8" COLOR="#b37800" STYLE="ROUNDED">
-                        <TR><TD BGCOLOR="#b37800">
-                            <FONT COLOR="white" POINT-SIZE="11"><B>Node 1 Pipeline</B></FONT>
-                        </TD></TR>
-                        <TR><TD ALIGN="LEFT">
-                            <FONT POINT-SIZE="10" COLOR="#666">nodeSelector: node-1</FONT><BR ALIGN="LEFT"/>
-                            <BR ALIGN="LEFT"/>
-                            <FONT FACE="Courier" POINT-SIZE="10">deploy DAG → wait ready</FONT><BR ALIGN="LEFT"/>
-                            <FONT FACE="Courier" POINT-SIZE="10">→ run steps (single/sweep)</FONT><BR ALIGN="LEFT"/>
-                            <FONT FACE="Courier" POINT-SIZE="10">→ teardown DAG</FONT>
-                        </TD></TR>
-                    </TABLE>
-                >]
-
-                node_pipe_2 [shape=plaintext margin=0 label=<
-                    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" CELLPADDING="10"
-                           WIDTH="200" BGCOLOR="#fdf0c8" COLOR="#b37800" STYLE="ROUNDED">
-                        <TR><TD BGCOLOR="#b37800">
-                            <FONT COLOR="white" POINT-SIZE="11"><B>Node 2 Pipeline</B></FONT>
-                        </TD></TR>
-                        <TR><TD ALIGN="LEFT">
-                            <FONT POINT-SIZE="10" COLOR="#666">nodeSelector: node-2</FONT><BR ALIGN="LEFT"/>
-                            <BR ALIGN="LEFT"/>
-                            <FONT FACE="Courier" POINT-SIZE="10">deploy DAG → wait ready</FONT><BR ALIGN="LEFT"/>
-                            <FONT FACE="Courier" POINT-SIZE="10">→ run steps (single/sweep)</FONT><BR ALIGN="LEFT"/>
-                            <FONT FACE="Courier" POINT-SIZE="10">→ teardown DAG</FONT>
-                        </TD></TR>
-                    </TABLE>
-                >]
-
-                node_pipe_n [shape=plaintext margin=0 label=<
-                    <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" CELLPADDING="10"
-                           WIDTH="200" BGCOLOR="#fdf0c8" COLOR="#b37800" STYLE="ROUNDED">
-                        <TR><TD BGCOLOR="#b37800">
-                            <FONT COLOR="white" POINT-SIZE="11"><B>Node N Pipeline</B></FONT>
-                        </TD></TR>
-                        <TR><TD ALIGN="LEFT">
-                            <FONT POINT-SIZE="10" COLOR="#666">nodeSelector: node-N</FONT><BR ALIGN="LEFT"/>
-                            <BR ALIGN="LEFT"/>
-                            <FONT FACE="Courier" POINT-SIZE="10">deploy DAG → wait ready</FONT><BR ALIGN="LEFT"/>
-                            <FONT FACE="Courier" POINT-SIZE="10">→ run steps (single/sweep)</FONT><BR ALIGN="LEFT"/>
-                            <FONT FACE="Courier" POINT-SIZE="10">→ teardown DAG</FONT>
-                        </TD></TR>
-                    </TABLE>
-                >]
-
-                {rank=same; node_pipe_1; node_pipe_2; node_pipe_n}
-                node_pipe_1 -> node_pipe_2 -> node_pipe_n [style=invis]
-            }
-
-            fan_in [shape=diamond width=0.2 height=0.2 fixedsize=true
-                    label="" fillcolor="#cc8a00" color="#cc8a00"]
-
-            cluster_tests [shape=plaintext margin=0 label=<
-                <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" CELLPADDING="12"
-                       BGCOLOR="#e4e7f3" COLOR="#354999" STYLE="ROUNDED">
-                    <TR><TD BGCOLOR="#354999">
+            test_execution [shape=plaintext margin=0 label=<
+                <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="4" CELLPADDING="10"
+                       BGCOLOR="#e8eef8" COLOR="#354999" STYLE="ROUNDED">
+                    <TR><TD COLSPAN="3" BGCOLOR="#354999" CELLPADDING="12">
                         <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4">
                             <TR><TD><FONT COLOR="white" POINT-SIZE="14"><B>4</B></FONT></TD>
-                                <TD><FONT COLOR="white" POINT-SIZE="12"><B>  Cluster Tests</B></FONT></TD>
-                                <TD><FONT COLOR="#9aa1cc" POINT-SIZE="10">  e.g. RDMA perftest</FONT></TD></TR>
+                                <TD><FONT COLOR="white" POINT-SIZE="12"><B>  Tests</B></FONT></TD>
+                                <TD><FONT COLOR="#9aa1cc" POINT-SIZE="10">  in test_suite.yaml list order</FONT></TD></TR>
                         </TABLE>
                     </TD></TR>
-                    <TR><TD ALIGN="LEFT">
-                        <FONT POINT-SIZE="10">Multi-node coordinated tests.</FONT><BR ALIGN="LEFT"/>
-                        <FONT POINT-SIZE="10">Cluster pipeline orchestrates tasks across nodes directly.</FONT><BR ALIGN="LEFT"/>
-                        <BR ALIGN="LEFT"/>
-                        <FONT FACE="Courier" POINT-SIZE="10">cluster → task on node A (server)</FONT><BR ALIGN="LEFT"/>
-                        <FONT FACE="Courier" POINT-SIZE="10">        → task on node B (client)</FONT><BR ALIGN="LEFT"/>
-                        <FONT FACE="Courier" POINT-SIZE="10">        → collect results</FONT>
-                    </TD></TR>
-                </TABLE>
-            >]
-
-            project_tests [shape=plaintext margin=0 label=<
-                <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" CELLPADDING="12"
-                       BGCOLOR="#e8f0e4" COLOR="#3a7d34" STYLE="ROUNDED">
-                    <TR><TD BGCOLOR="#3a7d34">
-                        <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4">
-                            <TR><TD><FONT COLOR="white" POINT-SIZE="14"><B>5</B></FONT></TD>
-                                <TD><FONT COLOR="white" POINT-SIZE="12"><B>  Project Tests</B></FONT></TD>
-                                <TD><FONT COLOR="#a3d49e" POINT-SIZE="10">  e.g. quotas, RBAC</FONT></TD></TR>
-                        </TABLE>
-                    </TD></TR>
-                    <TR><TD ALIGN="LEFT">
-                        <FONT POINT-SIZE="10">Namespace-level tests, no node affinity.</FONT><BR ALIGN="LEFT"/>
-                        <FONT POINT-SIZE="10">Validates project-wide concerns after cluster tests.</FONT><BR ALIGN="LEFT"/>
-                        <BR ALIGN="LEFT"/>
-                        <FONT FACE="Courier" POINT-SIZE="10">project → run quota/RBAC checks</FONT><BR ALIGN="LEFT"/>
-                        <FONT FACE="Courier" POINT-SIZE="10">        → validate network policies</FONT><BR ALIGN="LEFT"/>
-                        <FONT FACE="Courier" POINT-SIZE="10">        → collect results</FONT>
+                    <TR>
+                        <TD BGCOLOR="#dde4f0" VALIGN="TOP">
+                            <FONT POINT-SIZE="11"><B>scope: node</B></FONT><BR/>
+                            <FONT POINT-SIZE="10" COLOR="#555">fan out to ×N node<BR/>pipelines (parallel)</FONT><BR/><BR/>
+                            <FONT FACE="Courier" POINT-SIZE="9">deploy DAG → wait<BR/>→ run steps/sweep<BR/>→ teardown DAG</FONT>
+                        </TD>
+                        <TD BGCOLOR="#dde4f0" VALIGN="TOP">
+                            <FONT POINT-SIZE="11"><B>scope: cluster</B></FONT><BR/>
+                            <FONT POINT-SIZE="10" COLOR="#555">orchestrate tasks<BR/>across nodes directly</FONT><BR/><BR/>
+                            <FONT FACE="Courier" POINT-SIZE="9">node A (server)<BR/>→ node B (client)<BR/>→ collect results</FONT>
+                        </TD>
+                        <TD BGCOLOR="#dde4f0" VALIGN="TOP">
+                            <FONT POINT-SIZE="11"><B>scope: project</B></FONT><BR/>
+                            <FONT POINT-SIZE="10" COLOR="#555">no node affinity,<BR/>namespace-level</FONT><BR/><BR/>
+                            <FONT FACE="Courier" POINT-SIZE="9">quota/RBAC checks<BR/>→ network policies<BR/>→ collect results</FONT>
+                        </TD>
+                    </TR>
+                    <TR><TD COLSPAN="3">
+                        <FONT POINT-SIZE="10" COLOR="#555">per-test onFailure: continue | skipTest | abort</FONT>
                     </TD></TR>
                 </TABLE>
             >]
@@ -271,6 +196,12 @@ digraph architecture {
                 penwidth=1.5
                 margin=16
 
+                create_aggregator [label=<
+                    <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6">
+                        <TR><TD><FONT POINT-SIZE="14" COLOR="#996600"><B>5</B></FONT></TD>
+                            <TD><FONT POINT-SIZE="11">  Create Aggregator</FONT></TD></TR>
+                    </TABLE>>
+                    fillcolor="#ffe8b8" color="#cc8a00"]
                 aggregate [label=<
                     <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6">
                         <TR><TD><FONT POINT-SIZE="14" COLOR="#996600"><B>6</B></FONT></TD>
@@ -286,17 +217,11 @@ digraph architecture {
             }
 
             // edges within cluster pipeline
+            apply_configmap -> create_builder
             create_builder -> build_binaries
-            build_binaries -> fan_out [arrowhead=none]
-            fan_out -> node_pipe_1
-            fan_out -> node_pipe_2
-            fan_out -> node_pipe_n
-            node_pipe_1 -> fan_in
-            node_pipe_2 -> fan_in
-            node_pipe_n -> fan_in
-            fan_in -> cluster_tests [label=<<FONT POINT-SIZE="10">all node pipelines complete</FONT>>]
-            cluster_tests -> project_tests
-            project_tests -> aggregate [style=dashed]
+            build_binaries -> test_execution
+            test_execution -> create_aggregator [style=dashed]
+            create_aggregator -> aggregate
             aggregate -> cleanup_step
         }
     }
@@ -314,14 +239,12 @@ digraph architecture {
             </TD></TR>
             <TR><TD ALIGN="LEFT">
                 <FONT FACE="Courier" POINT-SIZE="10">
-&lt;basePath&gt;/&lt;timestamp&gt;/<BR ALIGN="LEFT"/>
+&lt;basePath&gt;/&lt;pipeline-run-name&gt;/<BR ALIGN="LEFT"/>
 ├── binaries/&lt;test&gt;/test.bin<BR ALIGN="LEFT"/>
-├── node/&lt;node&gt;/&lt;test&gt;/&lt;dag&gt;/  <FONT COLOR="#666"># per-step dir</FONT><BR ALIGN="LEFT"/>
+├── &lt;step_name&gt;/              <FONT COLOR="#666"># flat, one per step</FONT><BR ALIGN="LEFT"/>
 │     junit.xml, benchmarks<BR ALIGN="LEFT"/>
-├── cluster/                    <FONT COLOR="#666"># future</FONT><BR ALIGN="LEFT"/>
-├── project/                    <FONT COLOR="#666"># future</FONT><BR ALIGN="LEFT"/>
 └── report/<BR ALIGN="LEFT"/>
-      summary.json              <FONT COLOR="#666"># aggregated</FONT><BR ALIGN="LEFT"/>
+      summary.json             <FONT COLOR="#666"># aggregated</FONT><BR ALIGN="LEFT"/>
                 </FONT>
             </TD></TR>
         </TABLE>
@@ -337,8 +260,8 @@ digraph architecture {
 
     generator -> build_output [penwidth=1.5]
 
-    build_output -> create_builder [lhead=cluster_execution
-        label=<<FONT POINT-SIZE="10"><B>oc create -f</B></FONT>>
+    build_output -> apply_configmap [lhead=cluster_execution
+        label=<<FONT POINT-SIZE="10"><B>oc apply -f</B></FONT>>
         penwidth=1.5]
 
     cleanup_step -> results [style=invis]

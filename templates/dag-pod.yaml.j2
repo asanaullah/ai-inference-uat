@@ -7,10 +7,15 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: {{ managed_by_label }}
     test: {{ test }}
+    dag-step: {{ dag_step_name }}
+{% if node %}
     node: {{ node }}
+{% endif %}
 spec:
+{% if node %}
   nodeSelector:
     {{ node_selector_key }}: {{ node }}
+{% endif %}
 {% if privileged %}
   hostPID: true
 {% endif %}

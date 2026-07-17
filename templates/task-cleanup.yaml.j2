@@ -17,5 +17,6 @@ spec:
         echo "Cleaning up all UAT resources..."
         oc delete pods -l app.kubernetes.io/managed-by={{ managed_by_label }} --ignore-not-found
         oc delete services -l app.kubernetes.io/managed-by={{ managed_by_label }} --ignore-not-found
+        oc delete deployments -l app.kubernetes.io/managed-by={{ managed_by_label }} --ignore-not-found
         oc delete configmap {{ configmap_name }} --ignore-not-found
         echo "Cleanup complete"

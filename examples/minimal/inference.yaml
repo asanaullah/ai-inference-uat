@@ -20,7 +20,6 @@ spec:
     # Step 1: Deploy vLLM server (stays up for entire test)
     # Note: Tekton must create a Service for DNS resolution
     - name: vllm-server
-      type: deployment
       image: nvcr.io/nvidia/vllm:26.03-py3
       service:
         enabled: true
@@ -61,10 +60,7 @@ spec:
 
     # Step 2: Run pass-fail checks (health, model endpoint)
     - name: pass-fail
-      type: pod
       image: ghcr.io/vllm-project/guidellm:v0.6.1
-      dependsOn:
-        - vllm-server
       labelFilter: pass-fail
       env:
         - name: HOME
@@ -76,10 +72,7 @@ spec:
 
     # Step 3: Run benchmark sweeps (only if pass-fail succeeded)
     - name: sweep
-      type: pod
       image: ghcr.io/vllm-project/guidellm:v0.6.1
-      dependsOn:
-        - pass-fail
       labelFilter: quantitative
       env:
         - name: HOME

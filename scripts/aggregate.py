@@ -48,25 +48,23 @@ def main():
     totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
     entries = []
 
-    scope_dirs = ["node", "cluster", "project"]
-    for scope in scope_dirs:
-        scope_path = os.path.join(results_dir, scope)
-        if not os.path.isdir(scope_path):
+    for dirpath, dirnames, filenames in os.walk(results_dir):
+        dirnames[:] = sorted(d for d in dirnames if d not in ("binaries", "report"))
+
+        if "junit.xml" not in filenames:
             continue
-        for dirpath, _dirnames, filenames in sorted(os.walk(scope_path)):
-            if "junit.xml" not in filenames:
-                continue
 
-            junit_path = os.path.join(dirpath, "junit.xml")
-            rel_path = os.path.relpath(dirpath, scope_path)
-            entry_name = f"{scope}/{rel_path}"
+        rel_path = os.path.relpath(dirpath, results_dir)
+        if rel_path == ".":
+            continue
 
-            counts = parse_junit(junit_path)
-            for key in totals:
-                totals[key] += counts[key]
+        junit_path = os.path.join(dirpath, "junit.xml")
+        counts = parse_junit(junit_path)
+        for key in totals:
+            totals[key] += counts[key]
 
-            status = "failed" if counts["failures"] or counts["errors"] else "passed"
-            entries.append({"name": entry_name, **counts, "status": status})
+        status = "failed" if counts["failures"] or counts["errors"] else "passed"
+        entries.append({"name": rel_path, **counts, "status": status})
 
     overall = "failed" if totals["failures"] or totals["errors"] else "passed"
     summary = {"status": overall, "totals": totals, "entries": entries}

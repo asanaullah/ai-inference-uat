@@ -6,11 +6,10 @@ metadata:
   version: v0.0.1
 spec:
   tests:
-    node:
-      - component
-      - inference
-    cluster: []
-    project: []
-
-  execution:
-    stopOnFailure: false
+    - name: component
+      scope: node
+      onFailure: continue
+    - name: inference
+      scope: node
+      onFailure: abort
+      timeout: 1200s

@@ -7,7 +7,13 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: {{ managed_by_label }}
     test: {{ test }}
+    dag-step: {{ dag_step_name }}
+{% if node %}
     node: {{ node }}
+{% endif %}
+{% if sweep_id is defined %}
+    sweep: {{ sweep_id }}
+{% endif %}
 spec:
 {% if headless %}
   clusterIP: None
@@ -15,7 +21,10 @@ spec:
   selector:
     app.kubernetes.io/managed-by: {{ managed_by_label }}
     test: {{ test }}
+    dag-step: {{ dag_step_name }}
+{% if node %}
     node: {{ node }}
+{% endif %}
   ports:
     - port: {{ port }}
       targetPort: {{ port }}

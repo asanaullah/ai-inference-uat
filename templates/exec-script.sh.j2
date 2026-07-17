@@ -1,4 +1,6 @@
 #!/bin/bash
 # Assisted by Claude Opus 4.6
 set -e
+echo "Executing on {{ target }}: {{ args | shell_join }}"
 oc exec {{ target }} -- {{ args | shell_join }}
+echo "Done"
