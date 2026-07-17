@@ -17,6 +17,7 @@ from .common import (
     load_tool_config,
     render_manifest,
     render_template,
+    sanitize_node_name,
 )
 from .cluster import compute_cluster_steps
 from .models import ClusterTestSpec, LoadedTest, Step, ToolConfig
@@ -99,6 +100,8 @@ def main() -> None:
             raise SystemExit(1)
 
         cs = cluster.spec
+        for node_spec in cs.nodes:
+            node_spec.sanitized_name = sanitize_node_name(node_spec.name)
 
         print(f"Cluster: {Path(args.cluster).stem}")
         print(f"Namespace: {cs.namespace}")
@@ -267,17 +270,17 @@ def compute_setup_steps(
     files: dict[str, str] = {}
     for t in tests:
         assert t.go_source, f"Test {t.name} has empty Go source"
-        assert t.go_mod, f"Test {t.name} has empty go.mod"
         files[f"{t.name}_test.go"] = t.go_source
-        files[f"{t.name}_go.mod"] = t.go_mod
-        files[f"{t.name}_go.sum"] = t.go_sum
 
     files["cluster.yaml"] = Path(cluster_path).read_text()
     files["test_suite.yaml"] = (Path(suite_dir) / "test_suite.yaml").read_text()
     files["build.sh"] = render_template(
         jinja_env,
         "build.sh.j2",
-        {"tests": list(dict.fromkeys(t.name for t in tests))},
+        {
+            "tests": list(dict.fromkeys(t.name for t in tests)),
+            "ginkgo_version": tc.ginkgo_version,
+        },
     )
     files["aggregate.py"] = aggregate_py
 
@@ -467,9 +470,11 @@ def write_manual(
     test_steps = [s for s in steps if s.phase == "test"]
     teardown = [s for s in steps if s.phase == "teardown"]
 
+    pad_width = len(str(len(steps)))
+
     counter = 1
     for step in setup:
-        if _write_step(step, manual_dir, jinja_env, counter):
+        if _write_step(step, manual_dir, jinja_env, counter, pad_width):
             counter += 1
 
     tests_grouped: dict[str, list[Step]] = {}
@@ -488,18 +493,22 @@ def write_manual(
                 for n in nodes:
                     if i < len(nodes_grouped[n]):
                         if _write_step(
-                            nodes_grouped[n][i], manual_dir, jinja_env, counter
+                            nodes_grouped[n][i],
+                            manual_dir,
+                            jinja_env,
+                            counter,
+                            pad_width,
                         ):
                             wrote_any = True
                 if wrote_any:
                     counter += 1
         else:
             for s in t_steps:
-                if _write_step(s, manual_dir, jinja_env, counter):
+                if _write_step(s, manual_dir, jinja_env, counter, pad_width):
                     counter += 1
 
     for step in teardown:
-        if _write_step(step, manual_dir, jinja_env, counter):
+        if _write_step(step, manual_dir, jinja_env, counter, pad_width):
             counter += 1
 
     _stamp(manual_dir, run_id)
@@ -514,6 +523,7 @@ def _write_step(
     directory: Path,
     jinja_env: Environment,
     counter: int,
+    pad_width: int,
 ) -> bool:
     assert step.type in ("generate", "command"), f"Unknown step type: {step.type}"
 
@@ -530,7 +540,7 @@ def _write_step(
             path.write_text(step.content)
             return False
         ext = ".sh"
-        path = directory / f"{counter}-{filename}{ext}"
+        path = directory / f"{str(counter).zfill(pad_width)}-{filename}{ext}"
         path.write_text(step.content)
         _make_executable(path)
         return True
@@ -538,7 +548,7 @@ def _write_step(
     script = _derive_manual_script(step, jinja_env)
     if script:
         filename = _step_filename(step)
-        path = directory / f"{counter}-{filename}.sh"
+        path = directory / f"{str(counter).zfill(pad_width)}-{filename}.sh"
         path.write_text(script)
         _make_executable(path)
         return True
@@ -659,7 +669,10 @@ def write_tekton(
     for s in test_steps:
         node_groups.setdefault(s.node, []).append(s)
 
+    node_safe_names = {n.name: n.sanitized_name or n.name for n in cs.nodes}
+
     for node, n_steps in node_groups.items():
+        safe_node = node_safe_names.get(node, node)
         node_gen_lookup = _build_generate_lookup(n_steps)
         node_gen_lookup.update(gen_lookup)
 
@@ -680,7 +693,7 @@ def write_tekton(
                 if step.type != "command":
                     continue
 
-                task_name = step.name
+                task_name = step.resource_name or step.name
                 manifest = _resolve_manifest(step, node_gen_lookup)
                 manifest = manifest.replace("__TIMESTAMP__", "$(params.timestamp)")
                 args = [
@@ -697,10 +710,10 @@ def write_tekton(
                     cs,
                     jinja_env,
                 )
-                (tekton_dir / f"task-{task_name}.yaml").write_text(task_content)
+                (tekton_dir / f"task-{step.name}.yaml").write_text(task_content)
 
                 entry = {
-                    "name": step.name,
+                    "name": task_name,
                     "ref_type": "task",
                     "ref_name": task_name,
                     "params": [{"name": "timestamp", "value": "$(params.timestamp)"}],
@@ -714,9 +727,9 @@ def write_tekton(
                     test_finally_entries.append(entry)
                 else:
                     test_task_entries.append(entry)
-                    prev_step = step.name
+                    prev_step = task_name
 
-            test_pipeline_name = f"test-{test_id}-{test_name}-{node}"
+            test_pipeline_name = f"test-{test_id}-{test_name}-{safe_node}"
             test_pipeline = render_manifest(
                 jinja_env,
                 "pipeline.yaml.j2",
@@ -736,7 +749,7 @@ def write_tekton(
                 if test_on_failure in ("continue", "skipTest")
                 else "stopAndFail"
             )
-            node_pipeline_name = f"node-{test_id}-{test_name}-{node}"
+            node_pipeline_name = f"node-{test_id}-{test_name}-{safe_node}"
             node_pipeline = render_manifest(
                 jinja_env,
                 "pipeline.yaml.j2",
@@ -784,11 +797,12 @@ def write_tekton(
         step = _find_step(setup_steps, step_name, "command")
         if not step:
             continue
+        res = step.resource_name or step.name
         cluster_tasks.append(
             {
-                "name": step.name,
+                "name": res,
                 "ref_type": "task",
-                "ref_name": step.name,
+                "ref_name": res,
                 "params": [
                     {"name": "timestamp", "value": "$(context.pipelineRun.name)"}
                 ],
@@ -796,7 +810,7 @@ def write_tekton(
                 "on_error": "stopAndFail",
             }
         )
-        prev = step.name
+        prev = res
 
     prev_entries = [prev] if prev else []
     for test_id, test_name, test_on_failure in test_order:
@@ -808,7 +822,8 @@ def write_tekton(
             node_has_test = any(s.test_id == test_id for s in node_groups[node])
             if not node_has_test:
                 continue
-            entry_name = f"node-{test_id}-{test_name}-{node}"
+            sn = node_safe_names.get(node, node)
+            entry_name = f"node-{test_id}-{test_name}-{sn}"
             cluster_tasks.append(
                 {
                     "name": entry_name,
@@ -834,11 +849,12 @@ def write_tekton(
         step = _find_step(teardown_steps, task_name, "command")
         if not step:
             continue
+        res = step.resource_name or step.name
         cluster_finally.append(
             {
-                "name": step.name,
+                "name": res,
                 "ref_type": "task",
-                "ref_name": step.name,
+                "ref_name": res,
                 "params": [
                     {"name": "timestamp", "value": "$(context.pipelineRun.name)"}
                 ],
@@ -846,7 +862,7 @@ def write_tekton(
                 "on_error": step.config.get("onError", "stopAndFail"),
             }
         )
-        prev_finally = step.name
+        prev_finally = res
 
     cluster_pipeline = render_manifest(
         jinja_env,
@@ -887,7 +903,7 @@ def _resolve_manifest(step: Step, lookup: dict[str, str]) -> str:
 
 def _find_step(steps: list[Step], name: str, step_type: str) -> Step | None:
     for s in steps:
-        if s.name == name and s.type == step_type:
+        if (s.name == name or s.resource_name == name) and s.type == step_type:
             return s
     return None
 
@@ -919,7 +935,7 @@ def _write_tekton_tasks(
         if step.type != "command":
             continue
 
-        task_name = step.name
+        task_name = step.resource_name or step.name
         manifest = _resolve_manifest(step, gen_lookup)
         manifest = manifest.replace("__TIMESTAMP__", timestamp_var)
         args = [
@@ -936,7 +952,7 @@ def _write_tekton_tasks(
             cs,
             jinja_env,
         )
-        (tekton_dir / f"task-{task_name}.yaml").write_text(task_content)
+        (tekton_dir / f"task-{step.name}.yaml").write_text(task_content)
         task_names.append(task_name)
 
     return task_names

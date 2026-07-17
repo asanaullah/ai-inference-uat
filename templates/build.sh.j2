@@ -10,20 +10,17 @@ export PATH="$PATH:$GOPATH/bin"
 cp /src/cluster.yaml /workspace/cluster.yaml
 echo "Copied cluster.yaml to workspace"
 
-echo "Installing ginkgo..."
-go install github.com/onsi/ginkgo/v2/ginkgo@latest
-
 {% for test_name in tests %}
 echo "Building {{ test_name }} test binary..."
 mkdir -p /workspace/{{ test_name }}
 cp /src/{{ test_name }}_test.go /workspace/{{ test_name }}/test_test.go
-cp /src/{{ test_name }}_go.mod /workspace/{{ test_name }}/go.mod
-cp /src/{{ test_name }}_go.sum /workspace/{{ test_name }}/go.sum
 cp /src/cluster.yaml /workspace/{{ test_name }}/cluster.yaml
 cd /workspace/{{ test_name }}
+go mod init test
+go mod edit -require github.com/onsi/ginkgo/v2@{{ ginkgo_version }}
 go mod tidy
 go mod download
-ginkgo build -r .
+go run github.com/onsi/ginkgo/v2/ginkgo build -r .
 mv *.test test.bin
 chmod +x test.bin
 ls -lh test.bin

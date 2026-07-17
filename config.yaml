@@ -1,6 +1,7 @@
 # Assisted by Claude Opus 4.6
 oseCLIImage: registry.redhat.io/openshift4/ose-cli:latest
 builderImage: golang:1.25
+ginkgoVersion: v2.32.0
 aggregatorImage: python:3-slim
 configmapName: uat-test-source
 builderPodName: ginkgo-builder

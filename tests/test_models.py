@@ -157,7 +157,7 @@ class TestTestDefinition:
         t = Test(
             **{
                 "spec": {
-                    "source": {"ginkgo": "t.go", "goMod": "go.mod", "goSum": "go.sum"},
+                    "source": {"ginkgo": "t.go"},
                     "dag": [{"name": "run", "image": "img"}],
                 }
             }

@@ -1,7 +1,9 @@
 # Assisted by Claude Opus 4.6
 """Jinja2 engine, manifest validation, config loading, and shared utilities."""
 
+import hashlib
 import json
+import re
 import shlex
 from pathlib import Path
 from typing import Any
@@ -35,10 +37,41 @@ def _to_json(value: Any) -> str:
     return json.dumps(value)
 
 
+_YAML11_BOOLEANS = frozenset(
+    {
+        "true",
+        "false",
+        "yes",
+        "no",
+        "on",
+        "off",
+        "True",
+        "False",
+        "Yes",
+        "No",
+        "On",
+        "Off",
+        "TRUE",
+        "FALSE",
+        "YES",
+        "NO",
+        "ON",
+        "OFF",
+    }
+)
+
+
 def _yaml_quote(value: str) -> str:
     s = str(value)
     if not s or any(c in s for c in ":{}[],\"'|>&*#?!%@") or s != s.strip():
         return json.dumps(s)
+    if s in _YAML11_BOOLEANS or s in ("null", "Null", "NULL", "~"):
+        return json.dumps(s)
+    try:
+        float(s)
+        return json.dumps(s)
+    except ValueError:
+        pass
     return s
 
 
@@ -115,16 +148,12 @@ def load_config(
             test_def = Test(**yaml.safe_load(f))
 
         go_source = (suite_dir / test_def.spec.source.ginkgo).read_text()
-        go_mod = (suite_dir / test_def.spec.source.go_mod).read_text()
-        go_sum = (suite_dir / test_def.spec.source.go_sum).read_text()
 
         tests.append(
             LoadedTest(
                 name=entry.name,
                 spec=test_def.spec,
                 go_source=go_source,
-                go_mod=go_mod,
-                go_sum=go_sum,
                 on_failure=entry.on_failure,
                 timeout=entry.timeout,
                 test_id=test_id,
@@ -140,3 +169,14 @@ def build_command(args: list[str], flags: dict[str, Any]) -> list[str]:
     for key, value in flags.items():
         cmd.append(f"--{key}={value}")
     return cmd
+
+
+_INVALID_RFC1123 = re.compile(r"[^a-z0-9\-]")
+
+
+def sanitize_node_name(name: str) -> str:
+    sanitized = _INVALID_RFC1123.sub("-", name.lower()).strip("-")
+    if len(sanitized) <= 16:
+        return sanitized
+    h = hashlib.sha256(name.encode()).hexdigest()[:4]
+    return f"{sanitized[:12]}-{h}"

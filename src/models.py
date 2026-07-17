@@ -29,6 +29,7 @@ class ToolConfig(BaseModel):
     default_test_timeout: str = Field("600s", alias="defaultTestTimeout")
     pipeline_timeout: str = Field("2h", alias="pipelineTimeout")
     finally_timeout: str = Field("15m", alias="finallyTimeout")
+    ginkgo_version: str = Field("v2.32.0", alias="ginkgoVersion")
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +73,7 @@ class ComponentValidation(BaseModel):
 class NodeSpec(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
     name: str
+    sanitized_name: str = ""
     component_validation: ComponentValidation = Field(alias="componentValidation")
 
 
@@ -145,8 +147,6 @@ class DAGStep(BaseModel):
 class TestSource(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     ginkgo: str
-    go_mod: str = Field(alias="goMod")
-    go_sum: str = Field(alias="goSum")
 
 
 class TestSpec(BaseModel):
@@ -171,8 +171,6 @@ class LoadedTest:
     name: str
     spec: TestSpec
     go_source: str
-    go_mod: str
-    go_sum: str
     on_failure: str = "continue"
     timeout: Optional[str] = None
     test_id: str = ""
@@ -186,6 +184,7 @@ class Step:
     config: dict[str, Any]
     content: str = ""
     source: list[str] = field(default_factory=list)
+    resource_name: str = ""
     node: str = ""
     test: str = ""
     test_id: str = ""

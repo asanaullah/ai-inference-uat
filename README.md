@@ -16,7 +16,7 @@ A declarative test harness that generates Kubernetes manifests from test definit
   - [Generate Manifests](#generate-manifests)
   - [CLI Options](#cli-options)
   - [Run Manually](#run-manually)
-  - [Run with Tekton](#run-with-tekton)
+  - [Run with Tekton (untested)](#run-with-tekton-untested)
 - [Adding a Custom Test](#adding-a-custom-test)
 - [Test Definition Reference](#test-definition-reference)
   - [DAG Steps](#dag-steps)
@@ -216,11 +216,11 @@ Or run selectively — setup scripts come first, then test scripts (steps that r
 
 ```bash
 # Setup (first few scripts)
-bash build/manual/1-apply-configmap.sh
-bash build/manual/2-create-builder.sh
-bash build/manual/3-build.sh
+bash build/manual/01-apply-configmap.sh
+bash build/manual/02-create-builder.sh
+bash build/manual/03-build.sh
 
-# Test scripts follow (numbered 4+)
+# Test scripts follow (numbered 04+)
 # ...
 
 # Teardown (final scripts)
@@ -229,7 +229,7 @@ bash build/manual/N-aggregate.sh
 bash build/manual/N-cleanup.sh
 ```
 
-### Run with Tekton
+### Run with Tekton (untested)
 
 ```bash
 oc apply -f build/tekton/
@@ -281,8 +281,6 @@ spec:
 
   source:
     ginkgo: my-test.go
-    goMod: go.mod       # shared across tests in the suite
-    goSum: go.sum
 
   dag:
     - name: test-runner
@@ -448,6 +446,8 @@ spec:
     basePath: uat/results
 ```
 
+The `name` field is the value matched against the `nodeSelectorKey` label (default: `kubernetes.io/hostname`). It is also used in step names for human readability. For Kubernetes resource names (pods, services, Tekton tasks), the generator sanitizes the node name: invalid characters are replaced with dashes, uppercase is lowercased, and names longer than 16 characters are truncated to 12 characters with a 4-character hash suffix. Short, simple names like `wrk-4` are used as-is; FQDN hostnames like `ip-10-0-1-42.ec2.internal` are automatically shortened.
+
 All fields under `componentValidation` are available in Jinja2 templates. The `sanity.gpuCount` field is used for GPU requirement checks — tests with `requirements.gpu: true` are skipped on nodes with `gpuCount: 0`.
 
 ### Tool Config (`config.yaml`)
@@ -457,6 +457,7 @@ Controls images, pod names, labels, and timeouts:
 ```yaml
 oseCLIImage: registry.redhat.io/openshift4/ose-cli:latest
 builderImage: golang:1.25
+ginkgoVersion: v2.32.0
 aggregatorImage: python:3-slim
 configmapName: uat-test-source
 builderPodName: ginkgo-builder
@@ -620,8 +621,6 @@ spec:
     gpu: true
   source:
     ginkgo: gpu-diag.go
-    goMod: go.mod
-    goSum: go.sum
   dag:
     - name: diag-runner
       image: nvcr.io/nvidia/cuda:12.8.0-devel-ubi9
@@ -673,7 +672,7 @@ templates/
   *.yaml.j2           Jinja2 templates for Kubernetes/Tekton manifests
   *.sh.j2             Jinja2 templates for shell scripts
 examples/
-  minimal/            Example test suite (test definitions, Go source, go.mod)
+  minimal/            Example test suite (test definitions, Go source)
 cluster/              Cluster configs
 config.yaml           Tool config
 requirements.txt      Python dependencies
@@ -683,7 +682,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for design decisions and [IMPLEMENTATION.
 
 ## Why ConfigMaps
 
-The generator delivers Go source, go.mod/go.sum, build scripts, cluster config, test suite config, and the aggregation script to the builder pod via a Kubernetes ConfigMap. An alternative approach — using a setup pod that clones Git repos directly onto the PVC — was explored and rejected due to the following challenges:
+The generator delivers Go source, build scripts, cluster config, test suite config, and the aggregation script to the builder pod via a Kubernetes ConfigMap. The `go.mod` is generated at build time from the Ginkgo version pinned in `config.yaml`, so test authors only need to provide a `.go` source file. An alternative approach — using a setup pod that clones Git repos directly onto the PVC — was explored and rejected due to the following challenges:
 
 - **Cluster config consistency.** The cluster YAML contains sensitive, environment-specific details (node names, GPU counts, namespace, storage config). With Git clones, the cluster config must either live in a public repo (security risk) or on a separate PVC (adding a `clusterConfigSource`/`clusterConfigPvc` configuration surface). The ConfigMap approach uses the same local file the generator already reads, guaranteeing the cluster config in the pod matches what the generator used to compute the DAG.
 
@@ -691,4 +690,4 @@ The generator delivers Go source, go.mod/go.sum, build scripts, cluster config, 
 
 - **Additional infrastructure.** The setup pod approach requires a Python image, network access to clone repos, `pip install` of dependencies, and a standalone `builder.py` script that duplicates test-suite parsing logic already in the generator. The ConfigMap approach has no runtime dependencies beyond `oc` and the Go toolchain.
 
-The ConfigMap approach has a **1MB size limit** (Kubernetes hard constraint). This is sufficient for the current test suite but may become a bottleneck if the number of tests or the size of `go.sum` grows significantly. If the limit is hit, the recommended mitigation is to split tests across multiple suite directories and run separate pipelines, or to revisit the Git clone approach with a mechanism to pin the exact commit the generator ran against.
+The ConfigMap approach has a **1MB size limit** (Kubernetes hard constraint). This is sufficient for the current test suite but may become a bottleneck if the number of tests grows significantly. If the limit is hit, the recommended mitigation is to split tests across multiple suite directories and run separate pipelines, or to revisit the Git clone approach with a mechanism to pin the exact commit the generator ran against.

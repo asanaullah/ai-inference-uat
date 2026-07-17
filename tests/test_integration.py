@@ -65,9 +65,9 @@ class TestManualOutput:
         manifests = [f.name for f in (manual / "manifests").iterdir()]
         assert "apply-configmap.yaml" in manifests
         assert "create-builder.yaml" in manifests
-        assert "1-apply-configmap.sh" in names
-        assert "2-create-builder.sh" in names
-        assert "3-build.sh" in names
+        assert any(n.endswith("-apply-configmap.sh") for n in names)
+        assert any(n.endswith("-create-builder.sh") for n in names)
+        assert any(n.endswith("-build.sh") for n in names)
 
     def test_teardown_files(self, build_dir):
         manual = build_dir / "manual"
@@ -85,6 +85,11 @@ class TestManualOutput:
     def test_scripts_executable(self, build_dir):
         for f in (build_dir / "manual").rglob("*.sh"):
             assert f.stat().st_mode & 0o111, f"{f} not executable"
+
+    def test_script_glob_order(self, build_dir):
+        scripts = sorted(f.name for f in (build_dir / "manual").glob("*.sh"))
+        counters = [int(s.split("-", 1)[0]) for s in scripts]
+        assert counters == sorted(counters)
 
 
 class TestTektonOutput:

@@ -30,6 +30,7 @@ def compute_node_steps(
     # that can't be shared across nodes.
     steps: list[Step] = []
     node = node_spec.name
+    safe_node = node_spec.sanitized_name or node
     node_spec_dict = node_spec.model_dump(by_alias=True)
 
     if not node_meets_requirements(test.spec.requirements, node_spec):
@@ -52,6 +53,7 @@ def compute_node_steps(
                 steps,
                 dag_step,
                 node,
+                safe_node,
                 test,
                 tool_config,
                 namespace,
@@ -66,6 +68,7 @@ def compute_node_steps(
                 steps,
                 dag_step,
                 node,
+                safe_node,
                 test,
                 tool_config,
                 namespace,
@@ -77,6 +80,7 @@ def compute_node_steps(
             )
 
     step_prefix = f"{test.test_id}-{test.name}-{node}"
+    res_prefix = f"{test.test_id}-{test.name}-{safe_node}"
     selector = f"test={test.name},node={node}"
     if has_persistent:
         steps.append(
@@ -88,6 +92,7 @@ def compute_node_steps(
                     "probe": "none",
                     "selector": selector,
                 },
+                resource_name=f"{res_prefix}-teardown",
                 node=node,
                 test=test.name,
                 test_id=test.test_id,
@@ -105,6 +110,7 @@ def compute_node_steps(
                 "probe": "none",
                 "selector": selector,
             },
+            resource_name=f"{res_prefix}-finally-teardown",
             node=node,
             test=test.name,
             test_id=test.test_id,
@@ -127,6 +133,7 @@ def _add_persistent_steps(
     steps: list[Step],
     dag_step: DAGStep,
     node: str,
+    safe_node: str,
     test: LoadedTest,
     tc: ToolConfig,
     namespace: str,
@@ -137,8 +144,9 @@ def _add_persistent_steps(
     jinja_env: Environment,
 ) -> None:
     step_prefix = f"{test.test_id}-{test.name}-{node}"
+    res_prefix = f"{test.test_id}-{test.name}-{safe_node}"
     step_name = f"{step_prefix}-{dag_step.name}"
-    pod_name = step_name
+    pod_name = f"{res_prefix}-{dag_step.name}"
 
     render_ctx = {
         "timestamp": "__TIMESTAMP__",
@@ -162,7 +170,7 @@ def _add_persistent_steps(
     )
 
     if dag_step.service.enabled:
-        svc_name = f"svc-{step_prefix}-{dag_step.service.name}"
+        svc_name = f"svc-{res_prefix}-{dag_step.service.name}"
         services[dag_step.service.name] = {
             "url": f"http://{svc_name}:{dag_step.service.port}",
             "name": svc_name,
@@ -220,6 +228,7 @@ def _add_persistent_steps(
             type="generate",
             config=gen_config,
             content=content,
+            resource_name=pod_name,
             node=node,
             test=test.name,
             test_id=test.test_id,
@@ -239,6 +248,7 @@ def _add_persistent_steps(
                 "timeout": tc.deploy_timeout,
             },
             source=[step_name],
+            resource_name=pod_name,
             node=node,
             test=test.name,
             test_id=test.test_id,
@@ -253,6 +263,7 @@ def _add_ephemeral_steps(
     steps: list[Step],
     dag_step: DAGStep,
     node: str,
+    safe_node: str,
     test: LoadedTest,
     tc: ToolConfig,
     namespace: str,
@@ -263,11 +274,12 @@ def _add_ephemeral_steps(
     jinja_env: Environment,
 ) -> None:
     step_prefix = f"{test.test_id}-{test.name}-{node}"
+    res_prefix = f"{test.test_id}-{test.name}-{safe_node}"
     has_sweep = dag_step.parameter_sweep is not None
 
     svc_name = ""
     if dag_step.service.enabled:
-        svc_name = f"svc-{step_prefix}-{dag_step.service.name}"
+        svc_name = f"svc-{res_prefix}-{dag_step.service.name}"
         services[dag_step.service.name] = {
             "url": f"http://{svc_name}:{dag_step.service.port}",
             "name": svc_name,
@@ -289,12 +301,16 @@ def _add_ephemeral_steps(
     for sweep_id, _sweep_desc, sweep_flags in entries:
         if has_sweep:
             step_name = f"{step_prefix}-{dag_step.name}-{sweep_id}"
+            res_name = f"{res_prefix}-{dag_step.name}-{sweep_id}"
             cleanup_name = f"{step_prefix}-cleanup-{dag_step.name}-{sweep_id}"
+            cleanup_res = f"{res_prefix}-cleanup-{dag_step.name}-{sweep_id}"
         else:
             step_name = f"{step_prefix}-{dag_step.name}"
+            res_name = f"{res_prefix}-{dag_step.name}"
             cleanup_name = f"{step_prefix}-cleanup-{dag_step.name}"
+            cleanup_res = f"{res_prefix}-cleanup-{dag_step.name}"
 
-        pod_name = step_name
+        pod_name = res_name
         param_sweep: dict[str, Any] = {"id": sweep_id}
         workspace_subpath = f"{base_path}/__TIMESTAMP__/{step_name}"
         binaries_subpath = f"{base_path}/__TIMESTAMP__/binaries"
@@ -402,6 +418,7 @@ def _add_ephemeral_steps(
                 type="generate",
                 config=gen_config,
                 content=content,
+                resource_name=res_name,
                 node=node,
                 test=test.name,
                 test_id=test.test_id,
@@ -421,6 +438,7 @@ def _add_ephemeral_steps(
                     "timeout": test.timeout or tc.default_test_timeout,
                 },
                 source=[step_name],
+                resource_name=res_name,
                 node=node,
                 test=test.name,
                 test_id=test.test_id,
@@ -439,6 +457,7 @@ def _add_ephemeral_steps(
                     "probe": "none",
                     "selector": selector,
                 },
+                resource_name=cleanup_res,
                 node=node,
                 test=test.name,
                 test_id=test.test_id,

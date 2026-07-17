@@ -57,7 +57,9 @@ The generator takes the YAML definitions, accompanying Go files, and a list of t
 
 3. **Tekton writer** — derives Tekton Tasks and Pipelines from the same steps. Pod manifests are embedded directly in Tekton Task scripts, so `build/tekton/` is self-contained.
 
-Every rendered manifest must be validated at generation time — invalid YAML, missing `apiVersion`, `kind`, or `metadata.name`/`metadata.generateName` must fail the generator immediately rather than producing broken manifests that only surface at `oc apply` time. Pod names are validated for RFC 1123 label compliance (lowercase alphanumeric, hyphens, etc.) and uniqueness after computation, since they are used as pod names, PVC directories, filenames, and Tekton task names — a duplicate would cause resource collisions. Service names are validated for DNS-1035 compliance (must start with a lowercase letter, contain only lowercase alphanumeric characters and hyphens, and end with a lowercase alphanumeric character).
+Every rendered manifest must be validated at generation time — invalid YAML, missing `apiVersion`, `kind`, or `metadata.name`/`metadata.generateName` must fail the generator immediately rather than producing broken manifests that only surface at `oc apply` time. Pod names are validated for RFC 1123 label compliance (lowercase alphanumeric, hyphens, etc.) and uniqueness after computation — a duplicate would cause resource collisions. Service names are validated for DNS-1035 compliance (must start with a lowercase letter, contain only lowercase alphanumeric characters and hyphens, and end with a lowercase alphanumeric character).
+
+Each step carries two names: a human-readable **step name** (used for manual script filenames, PVC directory paths, and Tekton filenames on disk) and a **resource name** (used for Kubernetes `metadata.name` on pods, services, and Tekton tasks). The resource name substitutes a sanitized version of the node name: invalid characters (dots, underscores, etc.) are replaced with dashes, uppercase is lowercased, and names longer than 16 characters are truncated to 12 characters with a 4-character hash suffix. When the node name is short and already RFC 1123 compliant (e.g. `wrk-4`), both names are identical.
 
 ### Output Structure
 
@@ -75,18 +77,18 @@ build/
 │   │   ├── 2-inference-wrk-6-pass-fail.yaml
 │   │   ├── ...
 │   │   └── create-aggregator.yaml                       ← teardown manifest
-│   ├── 1-apply-configmap.sh                             ← apply script
-│   ├── 2-create-builder.sh                              ← apply script
-│   ├── 3-build.sh                                       ← exec script
-│   ├── 4-1-component-wrk-4-test-runner.sh               ← apply script (parallel nodes share counter)
-│   ├── 4-1-component-wrk-6-test-runner.sh
+│   ├── 01-apply-configmap.sh                            ← apply script
+│   ├── 02-create-builder.sh                             ← apply script
+│   ├── 03-build.sh                                      ← exec script
+│   ├── 04-1-component-wrk-4-test-runner.sh              ← apply script (parallel nodes share counter)
+│   ├── 04-1-component-wrk-6-test-runner.sh
 │   ├── ...
-│   ├── 7-2-inference-wrk-4-vllm-server.sh               ← apply script
-│   ├── 7-2-inference-wrk-6-vllm-server.sh
-│   ├── 8-2-inference-wrk-4-pass-fail.sh                 ← apply script
-│   ├── 8-2-inference-wrk-6-pass-fail.sh
+│   ├── 07-2-inference-wrk-4-vllm-server.sh              ← apply script
+│   ├── 07-2-inference-wrk-6-vllm-server.sh
+│   ├── 08-2-inference-wrk-4-pass-fail.sh                ← apply script
+│   ├── 08-2-inference-wrk-6-pass-fail.sh
 │   ├── ...
-│   ├── N-create-aggregator.sh                           ← apply script
+│   ├── NN-create-aggregator.sh                          ← apply script
 │   ├── N-aggregate.sh                                   ← exec script
 │   └── N-cleanup.sh                                     ← delete-all script
 └── tekton/
@@ -100,7 +102,7 @@ build/
     └── pipelinerun.yaml
 ```
 
-Manifests (`.yaml`) are written to `manual/manifests/` without a counter prefix — they are data files, not actions. Numbered shell scripts (`.sh`) are written to `manual/` and are what the operator runs in order: apply scripts reference the corresponding manifest (`oc apply -f manifests/<name>.yaml`), exec scripts run commands, and delete scripts clean up resources. Steps that run in parallel across nodes share the same counter. The numbered scripts are the single source of "what to do, in what order."
+Manifests (`.yaml`) are written to `manual/manifests/` without a counter prefix — they are data files, not actions. Numbered shell scripts (`.sh`) are written to `manual/` and are what the operator runs in order: apply scripts reference the corresponding manifest (`oc apply -f manifests/<name>.yaml`), exec scripts run commands, and delete scripts clean up resources. Steps that run in parallel across nodes share the same counter. The counter is zero-padded to the width of the total step count so that shell glob ordering (`*.sh`) matches execution order. The numbered scripts are the single source of "what to do, in what order."
 
 `<test_id>` is the 1-indexed position of the test in the `test_suite.yaml` list (not zero-padded). The same test can appear multiple times in the list (e.g. with different configs or failure policies), so `<test_id>` prevents collisions in resource names and results paths, while `<test_name>` provides readability. For node-scoped tests, `<node>` is added to prevent collisions across parallel nodes. Service names are prefixed with `svc-` for DNS-1035 compliance (services require names starting with a letter). Service URL references in env vars and commands are automatically rewritten to match.
 
@@ -115,11 +117,11 @@ apply-configmap → create-builder → build → [tests in list order] → final
                                                                             (sequenced via runAfter)
 ```
 
-**1. Apply ConfigMap** — creates a ConfigMap containing all Go source, go.mod/go.sum, cluster config, test suite config, build script, and aggregator script.
+**1. Apply ConfigMap** — creates a ConfigMap containing all Go source, cluster config, test suite config, build script, and aggregator script.
 
 **2. Create builder pod** — a long-lived Go toolchain pod with the PVC mounted at `/workspace` and the ConfigMap mounted at `/src/`.
 
-**3. Build binaries** — copies source from ConfigMap mounts into the PVC, compiles one Ginkgo binary per unique test name at `/workspace/<test>/test.bin`. If the same test name appears multiple times in `test_suite.yaml` (e.g. with different failure policies), all instances share the same binary.
+**3. Build binaries** — copies source from ConfigMap mounts into the PVC, generates a `go.mod` with the Ginkgo version pinned in `config.yaml`, and compiles one Ginkgo binary per unique test name at `/workspace/<test>/test.bin`. If the same test name appears multiple times in `test_suite.yaml` (e.g. with different failure policies), all instances share the same binary.
 
 **4. Tests** — executed in `test_suite.yaml` list order. Each test produces one pipeline entry in the cluster pipeline. Scope determines the shape:
 
@@ -205,7 +207,7 @@ The base path is a cluster-level setting that scopes results to a particular tes
 |---|---|
 | Steps-first generation | The generator computes a flat, ordered step list from test definitions, then both the manual writer and the Tekton writer independently derive their output from that same list. This ensures both paths always produce equivalent resources, and makes it straightforward to add writers for other orchestration harnesses without changing step computation. |
 | Three test scopes, one list | **Node** tests validate per-node hardware (GPUs, drivers). **Cluster** tests validate multi-node coordination (RDMA, interconnect). **Project** tests validate namespace-level concerns (quotas, RBAC) without node affinity. All three scopes are declared in a single ordered list in `test_suite.yaml`, allowing interleaved execution — each test is its own pipeline entry in the cluster pipeline, so scopes can alternate freely. Currently only node scope is implemented; cluster and project are planned. |
-| Unified step naming | DAG steps follow a single naming convention: `<test_id>-<test>-<node>-<dag_step>` (node-scoped) or `<test_id>-<test>-<dag_step>` (cluster/project-scoped), with `-<id>` appended for sweep entries. The same name is used for step identity, pod names, PVC directories, manual filenames, and Tekton task names. Lifecycle steps extend the convention with a fixed suffix: `<prefix>-cleanup-<dag_step>[-<id>]` (per-ephemeral-step cleanup), `<prefix>-teardown` (persistent resource teardown), and `<prefix>-finally-teardown` (always-run safety net). `<test_id>` prevents collisions when the same test appears multiple times in the suite; `<node>` prevents collisions across parallel nodes. Service names are prefixed with `svc-` for DNS-1035 compliance. Service URL references are rewritten automatically. |
+| Unified step naming | DAG steps follow a single naming convention: `<test_id>-<test>-<node>-<dag_step>` (node-scoped) or `<test_id>-<test>-<dag_step>` (cluster/project-scoped), with `-<id>` appended for sweep entries. Each step carries a human-readable **step name** (used for filenames and PVC paths) and a **resource name** (used for Kubernetes `metadata.name` on pods, services, and Tekton tasks). The resource name uses a sanitized node name where invalid characters are replaced with dashes and names over 16 characters are truncated to 12 + a 4-character hash. When the node name is short and RFC 1123 compliant, both names are identical. Lifecycle steps extend the convention with a fixed suffix: `<prefix>-cleanup-<dag_step>[-<id>]` (per-ephemeral-step cleanup), `<prefix>-teardown` (persistent resource teardown), and `<prefix>-finally-teardown` (always-run safety net). `<test_id>` prevents collisions when the same test appears multiple times in the suite; `<node>` prevents collisions across parallel nodes. Service names are prefixed with `svc-` for DNS-1035 compliance. Service URL references are rewritten automatically. |
 | One binary per test, not per parameter | Same test logic, different runtime config. Avoids redundant compilation. |
 | ConfigMap → Builder Pod → PVC | A single ConfigMap delivers all Go source to the builder pod. Builder pod provides a persistent compilation environment. PVC makes binaries accessible to any test container. Delivery mechanism is swappable (GitHub pull, custom image) without changing the rest of the pipeline. |
 | DAG resources persist through sweep | Expensive resources (GPU-backed servers) deploy once; the parameter sweep reuses them. |
@@ -216,7 +218,7 @@ The base path is a cluster-level setting that scopes results to a particular tes
 
 ## Constraints
 
-- **ConfigMap 1MB limit**: all Go source, go.mod/go.sum, cluster config, test suite config, build script, and aggregator script are packed into a single ConfigMap. A project with many tests or large go.sum files may exceed Kubernetes' 1MB ConfigMap limit.
-- **Resource name length**: step and pipeline names are constructed by concatenating test_id, test name, node, and DAG step (e.g. `2-inference-wrk-4-vllm-server`, `node-2-inference-wrk-4`). These can exceed the 63-character Kubernetes name limit with long test or node names. A future fix is to hash the tuple into a short suffix and carry the full names in labels.
+- **ConfigMap 1MB limit**: all Go source, cluster config, test suite config, build script, and aggregator script are packed into a single ConfigMap. A project with many tests may exceed Kubernetes' 1MB ConfigMap limit.
+- **Resource name length**: resource names are constructed by concatenating test_id, test name, sanitized node name, and DAG step (e.g. `2-inference-wrk-4-vllm-server`, `node-2-inference-wrk-4`). Node names are capped at 16 characters (12 + 4-char hash if longer), but the full resource name can still exceed the 63-character Kubernetes name limit with long test or DAG step names.
 - **One cluster pipeline per namespace**: the builder pod has a fixed name, so only one cluster pipeline can run at a time in a given namespace. This is typically sufficient — the node pipelines are the element that scales with cluster size, and a single cluster pipeline fans out to all target nodes in parallel.
 - **Sequential sweeps**: parameter sweep entries within a test run as separate pods in sequence. Failure behavior is controlled per-test via the `onFailure` field in `test_suite.yaml` (`continue`, `skipTest`, or `abort`). Each test is its own pipeline: `continue` sets `onError: continue` on inner steps so the test runs through failures; `skipTest` sets `onError: stopAndFail` on inner steps so the test stops on first failure but the cluster pipeline proceeds to the next test; `abort` sets `onError: stopAndFail` on both inner steps and the outer pipeline reference, stopping the cluster pipeline. In manual mode, scripts are independent and the operator controls whether to proceed.

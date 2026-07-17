@@ -47,15 +47,17 @@ Produces a flat list of `Step` dataclasses. Each step is one of two types:
 
 **Generate step** — produces an artifact (Kubernetes manifest or in-pod script):
 
-- `name` — identity, referenced by command steps via `source`
+- `name` — human-readable identity, referenced by command steps via `source`
 - `type` — `'generate'`
+- `resource_name` — sanitized name for Kubernetes `metadata.name` (pods, services, Tekton tasks); equals `name` when the node name is short and RFC 1123 compliant
 - `config.output` — `'manifest'` or `'script'`
 - `content` — rendered manifest/script text
 
 **Command step** — represents an action to execute:
 
-- `name` — identity
+- `name` — human-readable identity
 - `type` — `'command'`
+- `resource_name` — sanitized name for Kubernetes resource references
 - `config.command` — `'apply'`, `'exec'`, `'delete'`, `'delete-all'`
 - `config.probe` — `'wait-ready'`, `'poll-completed'`, `'none'`
 - `config.timeout` — for probe wait logic
@@ -85,7 +87,7 @@ The step list is built in three sections — setup, per-test, and teardown:
 
 **Setup steps** (`compute_setup_steps` in `generate.py`):
 
-1. generate `apply-configmap` — ConfigMap manifest with all Go source, go.mod, go.sum, cluster.yaml, test_suite.yaml, build.sh, aggregate.py
+1. generate `apply-configmap` — ConfigMap manifest with all Go source, cluster.yaml, test_suite.yaml, build.sh, aggregate.py
 2. command `apply-configmap` — apply configmap (source: `apply-configmap`)
 3. generate `create-builder` — long-lived Go toolchain pod manifest
 4. command `create-builder` — apply builder pod, probe: wait-ready (source: `create-builder`)
@@ -109,7 +111,9 @@ Binaries are compiled once per test name and stored at `binaries/<test_name>/tes
 
 **Cluster and project scopes** are not yet implemented (`cluster.py` and `project.py` are placeholder modules that return empty step lists, and the Tekton writer rejects any non-node-scoped test steps with a `ValueError`). Step names follow the same convention without the `<node>` segment (e.g. `<test_id>-<test>-<dag_step>`). Cluster tests will orchestrate across nodes directly (e.g. server on node A, client on node B). Project tests will run without node affinity.
 
-**Name validation:** After all steps are computed, the generator validates pod names for RFC 1123 label compliance (lowercase alphanumeric, hyphens, etc.) and uniqueness (since they are used as pod names, PVC directories, filenames, and Tekton task names — a duplicate would cause resource collisions), and service names for DNS-1035 compliance (must start with a lowercase letter, contain only lowercase alphanumeric characters and hyphens, and end with a lowercase alphanumeric character). The generator aborts with an error if any validation fails.
+**Node name sanitization:** After loading the cluster config, the generator computes a sanitized version of each node name for use in Kubernetes resource names: invalid characters are replaced with dashes, uppercase is lowercased, and names longer than 16 characters are truncated to 12 characters with a 4-character hash suffix. The sanitized name is stored on `NodeSpec.sanitized_name` and used for pod names, service names, and Tekton task `metadata.name`. The original name is used for `nodeSelector`, labels, label selectors, manual script filenames, and PVC directory paths.
+
+**Name validation:** After all steps are computed, the generator validates pod names for RFC 1123 label compliance and uniqueness — a duplicate would cause resource collisions. Service names are validated for DNS-1035 compliance (must start with a lowercase letter, contain only lowercase alphanumeric characters and hyphens, and end with a lowercase alphanumeric character). The generator aborts with an error if any validation fails.
 
 **Cluster finally steps** (`compute_teardown_steps` in `generate.py`) — placed in the cluster pipeline's `finally` block. Each step gets `onError: continue` so that cleanup runs even if aggregation fails:
 
@@ -122,7 +126,7 @@ Binaries are compiled once per test name and stored at `binaries/<test_name>/tes
 
 `write_manual` in `generate.py` writes steps to `build/manual/`. Manifests go into `manual/manifests/` as data files. Shell scripts go into `manual/` with a `<counter>-` prefix indicating execution order:
 
-1. **Ordering:** Command steps are assigned a counter in execution order. Setup steps get the initial counter values, test steps follow, and teardown steps get the final counter values. Steps that run in parallel across nodes share the same counter.
+1. **Ordering:** Command steps are assigned a counter in execution order, zero-padded to the width of the total step count so that shell glob ordering (`*.sh`) matches execution order. Setup steps get the initial counter values, test steps follow, and teardown steps get the final counter values. Steps that run in parallel across nodes share the same counter.
 
 2. **Writing:** For each step:
    - **Generate steps (manifests):** content is written as `manifests/<name>.yaml` — no counter prefix. These are reference data, not actions.
@@ -184,7 +188,7 @@ Every parsed config field and where it takes effect. **This is the section to ch
 
 | Field | Model | Effect |
 |---|---|---|
-| `spec.nodes[].name` | `NodeSpec.name` | Node name for `nodeSelector` pinning and step name prefixing (e.g. `<test_id>-<test>-<node>-<dag_step>`) |
+| `spec.nodes[].name` | `NodeSpec.name` | Node name for `nodeSelector` pinning and step name prefixing. A sanitized version (`NodeSpec.sanitized_name`) is computed at load time for Kubernetes resource names. |
 | `spec.nodes[].componentValidation.sanity.gpuCount` | `SanityCheck.gpu_count` | Determines GPU eligibility (> 0). Tests with `requirements.gpu: true` are skipped on nodes with `gpuCount <= 0` |
 | `spec.nodes[].componentValidation.*` | `ComponentValidation` (extra="allow") | All fields available in Jinja2 templates as `{{ nodeSpec.componentValidation.* }}` |
 | `spec.namespace` | `ClusterTestSpec.namespace` | Kubernetes namespace for all generated resources |
@@ -196,7 +200,7 @@ Every parsed config field and where it takes effect. **This is the section to ch
 | Field | Model | Effect |
 |---|---|---|
 | `spec.requirements.gpu` | `TestRequirements.gpu` | If `true`, test is skipped on nodes with `gpuCount == 0` |
-| `spec.source.{ginkgo,goMod,goSum}` | `TestSource` | Paths (relative to suite dir) to Go source files, read into `LoadedTest` |
+| `spec.source.ginkgo` | `TestSource` | Path (relative to suite dir) to the Ginkgo test file, read into `LoadedTest`. `go.mod` is generated at build time with the Ginkgo version from `config.yaml` |
 | `spec.dag[].persistsThroughSweep` | `DAGStep.persists_through_sweep` | `true`: rendered as generate + command (apply, wait-ready) pod (+ service); stays up for all sweep entries. `false`: rendered as generate + command (apply, poll-completed) pod; one per sweep entry |
 | `spec.dag[].service` | `DAGStep.service` | If `enabled: true`, generates a Service manifest and populates `{{ services["name"].url }}` in template context. `headless: true` (default) creates a headless Service (ClusterIP: None) |
 | `spec.dag[].command` | `DAGStep.command` | Structured command: `args` + `flags` → `["arg1", "--key=value"]`. Both persistent and non-persistent steps render command args through the Jinja2 template context (`serverConfig`, `nodeSpec`, `services`, `node`, `timestamp`). Non-persistent steps additionally have `paramSweep` available |
@@ -217,6 +221,7 @@ Every parsed config field and where it takes effect. **This is the section to ch
 |---|---|---|
 | `oseCLIImage` | `ToolConfig.ose_cli_image` | Image for Tekton task steps (runs `oc` commands) |
 | `builderImage` | `ToolConfig.builder_image` | Image for the Go builder pod |
+| `ginkgoVersion` | `ToolConfig.ginkgo_version` | Pinned Ginkgo version for test compilation (default `v2.32.0`). The build script generates `go.mod` with this version and uses `go run` to invoke the matching CLI |
 | `aggregatorImage` | `ToolConfig.aggregator_image` | Image for the Python aggregator pod |
 | `configmapName` | `ToolConfig.configmap_name` | Fixed name for the source-delivery ConfigMap |
 | `builderPodName` | `ToolConfig.builder_pod_name` | Fixed name for the builder pod |
@@ -341,7 +346,7 @@ Because `/workspace` IS the step's unique directory:
 
 ## Pod Name Conventions
 
-Pod and service names use the step name, which encodes test_id, test name, and node (for node-scoped tests) to avoid collisions:
+Pod and service names use the step's `resource_name`, which encodes test_id, test name, and sanitized node name (for node-scoped tests) to avoid collisions. `<node>` below refers to the sanitized node name:
 
 | Resource | Name pattern | Example |
 |---|---|---|
@@ -551,8 +556,8 @@ main()
 | `ParameterSweep` | nested in `DAGStep` | `baseCommand.{args,flags}`, `entries[].{id,description,flags}` |
 | `ClusterTest` | `cluster/*.yaml` | `spec.nodes[]`, `spec.namespace`, `spec.storage.{pvc,basePath}` |
 | `NodeSpec` | nested in `ClusterTest` | `name`, `componentValidation.sanity.gpuCount` (typed), all others via `extra="allow"` |
-| `ToolConfig` | `config.yaml` | `oseCLIImage`, `builderImage`, `aggregatorImage`, `configmapName`, `builderPodName`, `aggregatorPodName`, `nodeSelectorKey`, `managedByLabel`, `builderTimeout`, `aggregatorTimeout`, `deployTimeout`, `defaultTestTimeout`, `pipelineTimeout`, `finallyTimeout` |
-| `LoadedTest` | (dataclass) | `name`, `spec: TestSpec`, `go_source`, `go_mod`, `go_sum`, `on_failure`, `timeout`, `test_id`, `scope` |
+| `ToolConfig` | `config.yaml` | `oseCLIImage`, `builderImage`, `ginkgoVersion`, `aggregatorImage`, `configmapName`, `builderPodName`, `aggregatorPodName`, `nodeSelectorKey`, `managedByLabel`, `builderTimeout`, `aggregatorTimeout`, `deployTimeout`, `defaultTestTimeout`, `pipelineTimeout`, `finallyTimeout` |
+| `LoadedTest` | (dataclass) | `name`, `spec: TestSpec`, `go_source`, `on_failure`, `timeout`, `test_id`, `scope` |
 | `Step` | (dataclass) | `name`, `type` (`generate` or `command`), `config` (type-specific: `output`/`command`/`probe`/`timeout`; `onError` added by post-processing), `content` (generate only), `source` (command only, list of generate step names), `node` (node name, empty for global steps), `test` (test name, empty for setup/teardown), `test_id` (1-indexed position in test suite, empty for setup/teardown), `on_failure` (test policy: `continue`/`skipTest`/`abort`, empty for setup/teardown), `finally_step` (if `true`, placed in Tekton `finally` block), `scope`, `phase` |
 | `StepsFile` | `steps.json` | `metadata` (must contain `toolConfig` and `clusterSpec`), `steps[]` — flat list of serialized steps. Validated on load: step structure, source references, pod name uniqueness, and onError correctness |
 
@@ -562,7 +567,7 @@ main()
 
 ## Known Constraints
 
-- **ConfigMap 1MB limit:** All Go source, go.mod/go.sum, cluster config, test suite config, build script, and aggregator script are packed into a single ConfigMap. A project with many tests or large go.sum files may exceed Kubernetes' 1MB ConfigMap limit.
+- **ConfigMap 1MB limit:** All Go source, cluster config, test suite config, build script, and aggregator script are packed into a single ConfigMap. A project with many tests may exceed Kubernetes' 1MB ConfigMap limit.
 - **Resource name length**: step and pipeline names are constructed by concatenating test_id, test name, node, and DAG step (e.g. `2-inference-wrk-4-vllm-server`, `node-2-inference-wrk-4`). These can exceed the 63-character Kubernetes name limit with long test or node names. A future fix is to hash the tuple into a short suffix and carry the full names in labels.
 - **One cluster pipeline per namespace**: the builder pod has a fixed name, so only one cluster pipeline can run at a time in a given namespace. This is typically sufficient — the node pipelines are the element that scales with cluster size, and a single cluster pipeline fans out to all target nodes in parallel.
 - **Sequential sweeps**: parameter sweep entries within a test run as separate pods in sequence. Failure behavior is controlled per-test via the `onFailure` field in `test_suite.yaml` (`continue`, `skipTest`, or `abort`). Each test is its own pipeline: `continue` sets `onError: continue` on inner steps so the test runs through failures; `skipTest` sets `onError: stopAndFail` on inner steps so the test stops on first failure but the cluster pipeline proceeds to the next test; `abort` sets `onError: stopAndFail` on both inner steps and the outer pipeline reference, stopping the cluster pipeline. In manual mode, scripts are independent and the operator controls whether to proceed.

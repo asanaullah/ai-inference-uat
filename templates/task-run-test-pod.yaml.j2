@@ -19,16 +19,21 @@ spec:
         MANIFEST_EOF
 
         echo "Waiting for pod {{ pod_name }} to complete (timeout: {{ timeout }})..."
-        oc wait --for=jsonpath='{.status.phase}'=Succeeded pod/{{ pod_name }} --timeout={{ timeout }} && {
-          echo "Pod {{ pod_name }} completed successfully"
-          exit 0
-        }
-
-        PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
-        if [ "$PHASE" = "Failed" ]; then
-          echo "Pod {{ pod_name }} failed"
-          oc logs {{ pod_name }} --tail=50 || true
-          exit 1
-        fi
-        echo "Pod {{ pod_name }} timed out (phase: $PHASE)"
-        exit 1
+        TIMEOUT_SECS=$(echo "{{ timeout }}" | sed 's/s$//')
+        DEADLINE=$(($(date +%s) + TIMEOUT_SECS))
+        while true; do
+          PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
+          if [ "$PHASE" = "Succeeded" ]; then
+            echo "Pod {{ pod_name }} completed successfully"
+            exit 0
+          elif [ "$PHASE" = "Failed" ]; then
+            echo "Pod {{ pod_name }} failed"
+            oc logs {{ pod_name }} --tail=50 || true
+            exit 1
+          fi
+          if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+            echo "Pod {{ pod_name }} timed out (phase: $PHASE)"
+            exit 1
+          fi
+          sleep 5
+        done

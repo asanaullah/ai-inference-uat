@@ -39,16 +39,21 @@ elif [ "$PHASE" = "Failed" ]; then
 fi
 
 echo "Waiting for {{ pod_name }} to complete (timeout: {{ timeout }})..."
-oc wait --for=jsonpath='{.status.phase}'=Succeeded pod/{{ pod_name }} --timeout={{ timeout }} && {
-  echo "PASSED: {{ pod_name }}"
-  exit 0
-}
-
-PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
-if [ "$PHASE" = "Failed" ]; then
-  echo "FAILED: {{ pod_name }} (phase: $PHASE)"
-  exit 1
-fi
-echo "TIMEOUT: {{ pod_name }} did not complete within {{ timeout }}"
-exit 1
+TIMEOUT_SECS=$(echo "{{ timeout }}" | sed 's/s$//')
+DEADLINE=$(($(date +%s) + TIMEOUT_SECS))
+while true; do
+  PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
+  if [ "$PHASE" = "Succeeded" ]; then
+    echo "PASSED: {{ pod_name }}"
+    exit 0
+  elif [ "$PHASE" = "Failed" ]; then
+    echo "FAILED: {{ pod_name }} (phase: $PHASE)"
+    exit 1
+  fi
+  if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+    echo "TIMEOUT: {{ pod_name }} did not complete within {{ timeout }}"
+    exit 1
+  fi
+  sleep 5
+done
 {% endif %}

@@ -12,8 +12,6 @@ spec:
   # Test source
   source:
     ginkgo: inference.go
-    goMod: go.mod
-    goSum: go.sum
 
   # DAG definition - what resources to deploy and in what order
   dag:

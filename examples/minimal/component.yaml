@@ -11,8 +11,6 @@ spec:
 
   source:
     ginkgo: component.go
-    goMod: go.mod
-    goSum: go.sum
 
   dag:
     - name: test-runner

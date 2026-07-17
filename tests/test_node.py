@@ -31,7 +31,7 @@ def _test(
 ):
     dag = dag or [{"name": "run", "image": "img", "labelFilter": "pass-fail"}]
     spec = TestSpec(
-        source={"ginkgo": "t.go", "goMod": "go.mod", "goSum": "go.sum"},
+        source={"ginkgo": "t.go"},
         dag=dag,
         requirements={"gpu": gpu},
     )
@@ -39,8 +39,6 @@ def _test(
         name=name,
         spec=spec,
         go_source="x",
-        go_mod="x",
-        go_sum="x",
         on_failure=on_failure,
         timeout=timeout,
         test_id=test_id,

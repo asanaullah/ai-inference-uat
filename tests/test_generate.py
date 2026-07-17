@@ -51,12 +51,10 @@ def cs():
 
 def _test(name="t"):
     spec = TestSpec(
-        source={"ginkgo": "t.go", "goMod": "go.mod", "goSum": "go.sum"},
+        source={"ginkgo": "t.go"},
         dag=[{"name": "run", "image": "img", "labelFilter": "pass-fail"}],
     )
-    return LoadedTest(
-        name=name, spec=spec, go_source="src", go_mod="mod", go_sum="sum", test_id="1"
-    )
+    return LoadedTest(name=name, spec=spec, go_source="src", test_id="1")
 
 
 # -- Helpers ------------------------------------------------------------------
