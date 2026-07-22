@@ -103,8 +103,9 @@ digraph architecture {
                     <FONT POINT-SIZE="9" COLOR="#888">scripts in root, manifests in subdir</FONT>
                 </TD>
                 <TD BGCOLOR="#e2d0f0"><FONT POINT-SIZE="11"><B>tekton/</B></FONT><BR/>
-                    <FONT POINT-SIZE="10" COLOR="#555">pipelines, tasks, pipelinerun</FONT><BR/>
-                    <FONT POINT-SIZE="9" COLOR="#888">derived from same step list</FONT>
+                    <FONT POINT-SIZE="10" COLOR="#555">cluster pipeline, tasks,</FONT><BR/>
+                    <FONT POINT-SIZE="10" COLOR="#555">guard tasks, pipelinerun</FONT><BR/>
+                    <FONT POINT-SIZE="9" COLOR="#888">single flat pipeline</FONT>
                 </TD>
             </TR>
         </TABLE>
@@ -125,7 +126,7 @@ digraph architecture {
         margin=20
 
         subgraph cluster_cluster_pipeline {
-            label=<<FONT POINT-SIZE="12"><B>Cluster Pipeline</B></FONT>>
+            label=<<FONT POINT-SIZE="12"><B>Cluster Pipeline</B></FONT><FONT POINT-SIZE="9" COLOR="#666">  single flat pipeline, all tasks direct entries</FONT>>
             labeljust=l
             style="rounded,filled"
             fillcolor="#fdf0c8"
@@ -159,14 +160,14 @@ digraph architecture {
                     <TR><TD COLSPAN="3" BGCOLOR="#354999" CELLPADDING="12">
                         <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4">
                             <TR><TD><FONT COLOR="white" POINT-SIZE="14"><B>4</B></FONT></TD>
-                                <TD><FONT COLOR="white" POINT-SIZE="12"><B>  Tests</B></FONT></TD>
+                                <TD><FONT COLOR="white" POINT-SIZE="12"><B>  Test Task Chains</B></FONT></TD>
                                 <TD><FONT COLOR="#9aa1cc" POINT-SIZE="10">  in test_suite.yaml list order</FONT></TD></TR>
                         </TABLE>
                     </TD></TR>
                     <TR>
                         <TD BGCOLOR="#dde4f0" VALIGN="TOP">
                             <FONT POINT-SIZE="11"><B>scope: node</B></FONT><BR/>
-                            <FONT POINT-SIZE="10" COLOR="#555">fan out to ×N node<BR/>pipelines (parallel)</FONT><BR/><BR/>
+                            <FONT POINT-SIZE="10" COLOR="#555">parallel task chains<BR/>(one per node)</FONT><BR/><BR/>
                             <FONT FACE="Courier" POINT-SIZE="9">deploy DAG → wait<BR/>→ run steps/sweep<BR/>→ teardown DAG</FONT>
                         </TD>
                         <TD BGCOLOR="#dde4f0" VALIGN="TOP">
@@ -181,6 +182,7 @@ digraph architecture {
                         </TD>
                     </TR>
                     <TR><TD COLSPAN="3">
+                        <FONT POINT-SIZE="10" COLOR="#555">each test ends with a guard task (fan-in sync point)</FONT><BR/>
                         <FONT POINT-SIZE="10" COLOR="#555">per-test onFailure: continue | skipTest | abort</FONT>
                     </TD></TR>
                 </TABLE>

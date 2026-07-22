@@ -33,12 +33,12 @@ templates/
 
 The generator separates **what to run** (step computation) from **how to run it** (writers). Step computation produces a single ordered list of steps — the complete specification of every resource and action needed for the test suite. Writers are independent consumers that each translate the same step list into a different execution format. Adding a new execution backend (e.g. Argo Workflows, GitHub Actions) means writing a new writer — step computation doesn't change.
 
-All steps are computed with `__TIMESTAMP__` as a literal placeholder in any path or value that needs run-level isolation (results directories, aggregator paths). Each writer substitutes it differently: the manual writer replaces it with a user-provided `--run-id` value, while the Tekton writer replaces it with `$(params.timestamp)` so that it resolves at pipeline runtime.
+All steps are computed with `__TIMESTAMP__` as a literal placeholder in any path or value that needs run-level isolation (results directories, aggregator paths). Each writer substitutes it differently: the manual writer replaces it with a user-provided `--run-id` value, while the Tekton writer replaces it with a pipeline-runtime expression so that it resolves to the run name at execution time.
 
 ```
                                     ┌→ Manual writer  → build/manual/ (__TIMESTAMP__ → run-id)
 Step computation → [Step list] ─────┤
-                                    └→ Tekton writer  → build/tekton/ (__TIMESTAMP__ → $(params.timestamp))
+                                    └→ Tekton writer  → build/tekton/ (__TIMESTAMP__ → run name at runtime)
 ```
 
 ### Step Computation
@@ -74,14 +74,9 @@ Produces a flat list of `Step` dataclasses. Each step is one of two types:
 
 - `phase` — `'setup'`, `'test'`, or `'teardown'`. Both writers group steps by phase to separate setup, per-test, and teardown output.
 - `scope` — `'node'`, `'cluster'`, or `'project'` (empty for setup/teardown). Determines execution pattern in the manual writer and pipeline structure in the Tekton writer.
-- `finally_step` — if `true`, the Tekton writer places this step in the pipeline's `finally` block.
+- `finally_step` — marks steps that must run regardless of earlier failures. If `true` and the step has no `test` (global finally — aggregator, cleanup), it runs after all tests complete. If `true` and the step has a `test` (per-test finally-teardown), it is the last step in the test's chain and runs even when earlier steps fail. Writers translate this flag into backend-specific mechanisms.
 
-**`onError` assignment** — `config.onError` is not set during step computation. After all steps are computed, `generate.py` walks the step list and assigns `onError` to command steps by looking up the test's `onFailure` policy via `step.test`:
-
-- Setup steps (`finally_step=False`, no `test`): `onError: stopAndFail` (abort pipeline on setup failure)
-- Global finally steps (`finally_step=True`, no `test` — aggregator, cleanup): `onError: continue` (keep going through teardown failures)
-- Test steps (`finally_step=False`, has `test`): `onError: continue` if the test's `onFailure == "continue"`, otherwise `onError: stopAndFail`
-- Per-test finally steps (`finally_step=True`, has `test` — finally-teardown): no `onError` needed (Tekton `finally` always runs regardless of errors)
+**Failure policy labelling** — each step carries the test's `on_failure` policy from `test_suite.yaml` (`continue`, `skipTest`, or `abort`). Writers are responsible for translating these labels into backend-specific mechanisms — for example, the Tekton writer uses `onError` values, `when` guards, and guard tasks (see [Failure Policy Handling](#failure-policy-handling)).
 
 The step list is built in three sections — setup, per-test, and teardown:
 
@@ -115,7 +110,7 @@ Binaries are compiled once per test name and stored at `binaries/<test_name>/tes
 
 **Name validation:** After all steps are computed, the generator validates pod names for RFC 1123 label compliance and uniqueness — a duplicate would cause resource collisions. Service names are validated for DNS-1035 compliance (must start with a lowercase letter, contain only lowercase alphanumeric characters and hyphens, and end with a lowercase alphanumeric character). The generator aborts with an error if any validation fails.
 
-**Cluster finally steps** (`compute_teardown_steps` in `generate.py`) — placed in the cluster pipeline's `finally` block. Each step gets `onError: continue` so that cleanup runs even if aggregation fails:
+**Cluster finally steps** (`compute_teardown_steps` in `generate.py`) — teardown steps that run after all tests complete, regardless of success or failure. Each step has `finally_step=True`:
 
 1. generate `create-aggregator` — long-lived Python pod manifest
 2. command `create-aggregator` — apply aggregator pod, probe: wait-ready (source: `create-aggregator`)
@@ -150,25 +145,77 @@ Binaries are compiled once per test name and stored at `binaries/<test_name>/tes
 | `delete` | Delete pods, services, and deployments matching selector | `task-teardown.yaml.j2` |
 | `delete-all` | Delete all pods + services + deployments + configmap | `task-cleanup.yaml.j2` |
 
-**Pipeline generation:** The Tekton writer groups each node's steps by test ID. For each test on each node, it generates:
+**Pipeline generation:** The Tekton writer produces a single flat cluster pipeline. All tasks — setup, test, and teardown — are entries in one pipeline.
 
-1. A **test pipeline** (`test-<test_id>-<test>-<node>`) containing:
-   - **tasks:** all non-finally steps for that test, chained with `runAfter`. Each task uses the same name as the step it corresponds to.
-   - **finally:** steps with `finally_step=True` (the `finally-teardown` step)
+#### Cluster Pipeline
 
-2. A **node pipeline** (`node-<test_id>-<test>-<node>`) that wraps the test pipeline with a single `pipelineRef`. There is one node pipeline per (node × node-scoped test) combination — not one per node.
+```
+apply-configmap → create-builder → build → [test task chains] → finally: create-aggregator → aggregate → cleanup
+                                                                          (sequenced via runAfter)
+```
 
-The inner test pipeline's step-level `onError` values (already assigned by `generate.py` post-processing) determine whether execution continues within the test on step failure.
+Setup and teardown steps are placed directly in the cluster pipeline. For each test in `test_suite.yaml` list order, the cluster pipeline adds task entries based on scope:
 
-**Cluster pipeline:** Setup and teardown steps remain directly in the cluster pipeline. For each test in `test_suite.yaml` list order, the cluster pipeline adds entries based on scope:
+- **Node-scoped tests:** one task chain per node, all running in parallel (no `runAfter` between nodes for the same test). Within each chain, tasks are sequential via `runAfter`.
+- **Cluster/project-scoped tests:** a single task chain directly in the cluster pipeline. *(not yet implemented)*
 
-- **Node-scoped tests:** one `pipelineRef` per node pointing to `node-<test_id>-<test>-<node>`, all running in parallel. The next test's entries use `runAfter` on all node pipelines of the previous test.
-- **Cluster/project-scoped tests:** a single `pipelineRef` to the test pipeline (`test-<test_id>-<test>`) directly. *(not yet implemented)*
+Every test, regardless of scope, ends with a guard task. The guard task fans in after all the test's teardown tasks and serves as the single sync point between tests — the next test's first tasks `runAfter` the guard task. The guard task's `onError` is set according to the test's failure policy (see [Failure Policy Handling](#failure-policy-handling)).
 
-The `onError` on each pipeline reference is determined by the test's `on_failure` policy:
+Global finally steps (`finally_step=True`, no `test` — aggregator, cleanup) are placed in the cluster pipeline's `finally` block with `onError: continue`, sequenced via `runAfter`.
 
-- `continue` or `skipTest` → `onError: continue` (cluster pipeline proceeds to the next test)
-- `abort` → `onError: stopAndFail` (a failure on any single node is enough to stop the cluster pipeline)
+All tasks reference the pipeline run name directly via `$(context.pipelineRun.name)`.
+
+#### Failure Policy Handling
+
+The Tekton writer translates each step's failure policy label into `onError` values, `when` guards, and guard tasks.
+
+**Guard tasks:** Every test gets a guard task that fans in after all the test's teardown tasks. The guard task receives all non-teardown task statuses as a comma-separated parameter and exits non-zero if any value is `Failed`. The `onError` on the guard task determines the consequence:
+
+- `continue` or `skipTest` → `onError: continue` (pipeline proceeds to the next test regardless)
+- `abort` → `onError: stopAndFail` (pipeline halts and jumps to cluster `finally`)
+
+**`onError` assignment:**
+
+| Step category | `onError` |
+|---|---|
+| Setup steps | `stopAndFail` |
+| All test steps | `continue` |
+| Per-test finally steps (finally-teardown) | `continue` |
+| Global finally steps (aggregator, cleanup) | `continue` |
+| Guard tasks (`continue`/`skipTest` policy) | `continue` |
+| Guard tasks (`abort` policy) | `stopAndFail` |
+
+**Policy mechanics:**
+
+- **`continue`** — no `when` guards on any steps of the test. Every step runs regardless of failures. Guard task with `onError: continue` — pipeline always proceeds to the next test.
+
+- **`skipTest`** — `when` guards on non-first steps within each node chain, checking `$(tasks.<predecessor>.status) in ["Succeeded"]`. If a step fails, remaining guarded steps on that node are skipped; the per-test teardown (no `when` guard) still runs. Other nodes are unaffected. Guard task with `onError: continue` — pipeline always proceeds to the next test.
+
+- **`abort`** — `when` guards on non-first steps (same as `skipTest`). Other nodes complete the test normally (all remaining steps and teardown). Guard task with `onError: stopAndFail` — if any step failed on any node, the pipeline halts and jumps to cluster `finally`. No further tests run on any node.
+
+When a task is skipped by its `when` guard, its status becomes `None`, causing downstream guarded tasks in the same chain to also skip. The per-test teardown has no `when` guard, so it runs regardless — `scope-when-expressions-to-task` (default since Tekton v0.54) prevents the skip from cascading past unguarded tasks.
+
+#### Test Task Chains
+
+Each test produces one task chain per node (for node-scoped tests) or a single chain (for cluster/project-scoped tests). All tasks in a chain are direct entries in the cluster pipeline, chained via `runAfter`. Each task uses the same name as the step it corresponds to.
+
+```
+test-2-inference-wrk-4 chain:
+  2-inference-wrk-4-vllm-server
+    → 2-inference-wrk-4-pass-fail → 2-inference-wrk-4-cleanup-pass-fail
+    → 2-inference-wrk-4-sweep-short-burst → 2-inference-wrk-4-cleanup-sweep-short-burst
+    → 2-inference-wrk-4-sweep-sustained-load → 2-inference-wrk-4-cleanup-sweep-sustained-load
+    → 2-inference-wrk-4-sweep-long-context → 2-inference-wrk-4-cleanup-sweep-long-context
+    → 2-inference-wrk-4-teardown
+    → 2-inference-wrk-4-finally-teardown     (no when guard, always runs)
+```
+
+#### PipelineRun
+
+- Uses `generateName: uat-cluster-run-` (auto-generated unique name per run)
+- Sets `spec.timeouts.pipeline` from `config.yaml`'s `pipelineTimeout` (default `2h`)
+- Sets `spec.timeouts.finally` from `config.yaml`'s `finallyTimeout` (default `15m`) — reserves time for aggregation and cleanup so they run even if the pipeline times out
+- The generated name becomes the `$(context.pipelineRun.name)` value referenced by all tasks
 
 ## Config Field Usage Map
 
@@ -180,7 +227,7 @@ Every parsed config field and where it takes effect. **This is the section to ch
 |---|---|---|
 | `spec.tests[]` | `TestEntry` (list) | Ordered list of tests to run. List order determines execution order across all scopes |
 | `spec.tests[].name` | `TestEntry.name` | Test name — resolves to `<name>.yaml` definition and `<name>.go` source |
-| `spec.tests[].scope` | `TestEntry.scope` | One of `node`, `cluster`, `project`. Determines execution pattern: node tests fan out to parallel node pipelines, cluster tests orchestrate across nodes directly, project tests run without node affinity |
+| `spec.tests[].scope` | `TestEntry.scope` | One of `node`, `cluster`, `project`. Determines execution pattern: node tests fan out to parallel task chains (one per node), cluster tests orchestrate across nodes directly, project tests run without node affinity |
 | `spec.tests[].onFailure` | `TestEntry.on_failure` | Per-test failure policy (default: `continue`). `continue`: keep executing remaining steps within this test before proceeding to the next. `skipTest`: skip remaining steps within this test (tear down its resources), proceed to the next test. `abort`: abort the entire suite immediately |
 | `spec.tests[].timeout` | `TestEntry.timeout` | Optional per-test timeout for ephemeral test pod completion polling. Overrides `defaultTestTimeout` from `config.yaml`. If omitted, the default is used |
 
@@ -245,21 +292,10 @@ main() computes all steps with timestamp='__TIMESTAMP__'
   ├── Manual output: _stamp() replaces '__TIMESTAMP__' → args.run_id (e.g. 'manual-run')
   │   Workspace at: /workspace (subPath: <basePath>/<run-id>/<step_name>/)
   │
-  └── Tekton output: write_tekton() replaces '__TIMESTAMP__' → '$(params.timestamp)' in Python
-      │
-      ├── Cluster pipeline:
-      │   - $(context.pipelineRun.name) = top-level PipelineRun name
-      │   - Passes it as 'timestamp' param to every task and pipeline reference:
-      │     setup tasks, node pipelines, and finally-block tasks (aggregator, aggregate, cleanup)
-      │
-      └── Node pipeline (one per node × test):
-          - Declares 'timestamp' as a pipeline parameter
-          - Passes it to the test pipeline via pipelineRef
-          - Test tasks reference $(params.timestamp) — the value passed from the cluster pipeline
-          - Workspace at: /workspace (subPath: <basePath>/$(params.timestamp)/<step_name>/)
+  └── Tekton output: write_tekton() replaces '__TIMESTAMP__' → '$(context.pipelineRun.name)'
+      All tasks reference $(context.pipelineRun.name) directly.
+      Workspace at: /workspace (subPath: <basePath>/$(context.pipelineRun.name)/<step_name>/)
 ```
-
-**Invariant:** The node pipeline's `$(params.timestamp)` and the aggregator's `$(params.timestamp)` must resolve to the same value. Both receive `$(context.pipelineRun.name)` from the cluster pipeline. The node pipeline must NOT use `$(context.pipelineRun.name)` directly — that would resolve to the child PipelineRun name in Pipeline-in-Pipeline, which differs from the parent.
 
 ## PVC Directory Hierarchy and Volume Mounting
 
@@ -326,7 +362,7 @@ The generator computes workspace paths deterministically from the step name.
 | Project (future) | `<basePath>/__TIMESTAMP__/<test_id>-<test>-<dag_step>` |
 | Project (future, with sweep) | `<basePath>/__TIMESTAMP__/<test_id>-<test>-<dag_step>-<id>` |
 
-The `__TIMESTAMP__` placeholder is substituted by each writer: the manual writer replaces it with `--run-id`, the Tekton writer replaces it with `$(params.timestamp)`.
+The `__TIMESTAMP__` placeholder is substituted by each writer: the manual writer replaces it with `--run-id`, the Tekton writer replaces it with a pipeline-runtime expression that resolves to the run name.
 
 ### Pod Volume Mounting
 
@@ -361,61 +397,6 @@ Pod and service names use the step's `resource_name`, which encodes test_id, tes
 | Aggregator pod | `<tc.aggregator_pod_name>` (predefined name) | `uat-aggregator` |
 
 Service names are prefixed with `svc-` for DNS-1035 compliance (services must start with a letter, while pod names follow RFC 1123 which allows leading digits). Service URLs in the template context use the full service name: `{{ services["vllm-server"].url }}` → `http://svc-2-inference-wrk-4-vllm-server:8000`.
-
-## Tekton Pipeline Structure
-
-### Cluster Pipeline (`uat-cluster`)
-
-```
-apply-configmap → create-builder → build → [tests in list order] → finally: create-aggregator → aggregate → cleanup
-                                                                                                (sequenced via runAfter)
-```
-
-- Tests execute in `test_suite.yaml` list order; each test is a separate entry in the cluster pipeline
-- Node-scoped tests produce one `pipelineRef` per node (to `node-<test_id>-<test>-<node>`), all running in parallel. The next test's entries wait on all node pipelines of the previous test via `runAfter`
-- Cluster-scoped tests produce a single `pipelineRef` to the test pipeline directly *(not yet implemented)*
-- Project-scoped tests run without node affinity *(not yet implemented)*
-- Each node pipeline receives `timestamp` param = `$(context.pipelineRun.name)` from the cluster pipeline
-- Per-test `onFailure` determines `onError` on each pipeline reference: `continue` or `skipTest` → `onError: continue`, `abort` → `onError: stopAndFail` (a failure on any single node stops the cluster pipeline)
-- `create-aggregator`, `aggregate`, and `cleanup` are in the `finally` block (run regardless of success/failure), each with `onError: continue` so cleanup runs even if aggregation fails
-- `aggregate` has `runAfter: [create-aggregator]`, `cleanup` has `runAfter: [aggregate]` — sequenced within the finally block
-
-### Node Pipeline (`node-<test_id>-<test>-<node>`)
-
-Each node pipeline runs exactly one test on one node. It contains a single `pipelineRef` to the test pipeline. Pods within the test are pinned to the target node via `nodeSelector` in the pod manifests.
-
-```
-spec.params: [timestamp: string]
-
-tasks:
-  test-1-component-wrk-4 (pipelineRef → test-1-component-wrk-4)
-```
-
-### Test Pipeline (`test-<test_id>-<test>-<node>`)
-
-```
-spec.params: [timestamp: string]
-
-tasks (chained via runAfter):
-  2-inference-wrk-4-vllm-server
-    → 2-inference-wrk-4-pass-fail → 2-inference-wrk-4-cleanup-pass-fail
-    → 2-inference-wrk-4-sweep-short-burst → 2-inference-wrk-4-cleanup-sweep-short-burst
-    → 2-inference-wrk-4-sweep-sustained-load → 2-inference-wrk-4-cleanup-sweep-sustained-load
-    → 2-inference-wrk-4-sweep-long-context → 2-inference-wrk-4-cleanup-sweep-long-context
-    → 2-inference-wrk-4-teardown
-finally: 2-inference-wrk-4-finally-teardown
-```
-
-- Test command steps receive `timestamp` via `$(params.timestamp)` (pipeline param, not context)
-- Per-test `onFailure` determines step-level `onError` within the test pipeline: `continue` → `onError: continue` on each step, `skipTest` or `abort` → `onError: stopAndFail`
-- The `finally` block contains `<test_id>-<test>-<node>-finally-teardown` — hardcoded to always run, cleaning up all the test's resources (both persistent and ephemeral) regardless of success or failure
-
-### PipelineRun
-
-- Uses `generateName: uat-cluster-run-` (auto-generated unique name per run)
-- Sets `spec.timeouts.pipeline` from `config.yaml`'s `pipelineTimeout` (default `2h`)
-- Sets `spec.timeouts.finally` from `config.yaml`'s `finallyTimeout` (default `15m`) — reserves time for aggregation and cleanup so they run even if the pipeline times out
-- The generated name becomes the `$(context.pipelineRun.name)` value that flows through the timestamp chain
 
 ## Jinja2 Template Engine
 
@@ -495,20 +476,15 @@ main()
 │   ├── _validate_service_names(steps)                              [src/generate.py]
 │   │   Validates service names for DNS-1035 compliance
 │   │
-│   ├── assign_on_error(steps)                                      [src/generate.py]
-│   │   Post-processing: walks all steps and assigns config.onError
-│   │   based on step category (setup/teardown/test/finally)
-│   │
 │   └── write_steps_file(...)                                       [src/steps_io.py]
-│       Serializes steps (with onError already assigned) to steps.json
-│       for round-tripping
+│       Serializes steps to steps.json for round-tripping
 │
 ├── write_manual(...)                                               [src/generate.py]
 │   Generate steps → write manifests to manifests/ (no counter); command steps → derive numbered shell scripts
 │
 └── write_tekton(...)                                               [src/generate.py]
-    Routes command steps to Tekton task generators by command + probe config.
-    Generates node pipelines, cluster pipeline, and PipelineRun.
+    Assigns onError based on step category and failure policy.
+    Generates when guards, guard tasks, cluster pipeline, and PipelineRun.
 ```
 
 ## Template File Reference
@@ -529,7 +505,8 @@ main()
 
 | Template | Produces |
 |---|---|
-| `pipeline.yaml.j2` | Tekton Pipeline (shared by all pipelines) |
+| `pipeline.yaml.j2` | Tekton Pipeline (single flat cluster pipeline) |
+| `task-guard.yaml.j2` | Guard task (one per test, checks task statuses, `onError` set by failure policy) |
 | `pipelinerun.yaml.j2` | Tekton PipelineRun with timeout |
 | `task-apply-wait-ready.yaml.j2` | Tekton Task: apply manifest + wait Ready |
 | `task-exec.yaml.j2` | Tekton Task: exec command in target pod |
@@ -558,17 +535,17 @@ main()
 | `NodeSpec` | nested in `ClusterTest` | `name`, `componentValidation.sanity.gpuCount` (typed), all others via `extra="allow"` |
 | `ToolConfig` | `config.yaml` | `oseCLIImage`, `builderImage`, `ginkgoVersion`, `aggregatorImage`, `configmapName`, `builderPodName`, `aggregatorPodName`, `nodeSelectorKey`, `managedByLabel`, `builderTimeout`, `aggregatorTimeout`, `deployTimeout`, `defaultTestTimeout`, `pipelineTimeout`, `finallyTimeout` |
 | `LoadedTest` | (dataclass) | `name`, `spec: TestSpec`, `go_source`, `on_failure`, `timeout`, `test_id`, `scope` |
-| `Step` | (dataclass) | `name`, `type` (`generate` or `command`), `config` (type-specific: `output`/`command`/`probe`/`timeout`; `onError` added by post-processing), `content` (generate only), `source` (command only, list of generate step names), `node` (node name, empty for global steps), `test` (test name, empty for setup/teardown), `test_id` (1-indexed position in test suite, empty for setup/teardown), `on_failure` (test policy: `continue`/`skipTest`/`abort`, empty for setup/teardown), `finally_step` (if `true`, placed in Tekton `finally` block), `scope`, `phase` |
-| `StepsFile` | `steps.json` | `metadata` (must contain `toolConfig` and `clusterSpec`), `steps[]` — flat list of serialized steps. Validated on load: step structure, source references, pod name uniqueness, and onError correctness |
+| `Step` | (dataclass) | `name`, `type` (`generate` or `command`), `config` (type-specific: `output`/`command`/`probe`/`timeout`), `content` (generate only), `source` (command only, list of generate step names), `node` (node name, empty for global steps), `test` (test name, empty for setup/teardown), `test_id` (1-indexed position in test suite, empty for setup/teardown), `on_failure` (test policy: `continue`/`skipTest`/`abort`, empty for setup/teardown), `finally_step` (if `true` and no `test`: placed in cluster pipeline `finally` block; if `true` and has `test`: rendered as regular task with no `when` guard), `scope`, `phase` |
+| `StepsFile` | `steps.json` | `metadata` (must contain `toolConfig` and `clusterSpec`), `steps[]` — flat list of serialized steps. Validated on load: step structure, source references, pod name uniqueness, and failure policy labels |
 
 ## Resource Requirement Checks and Test Skipping
 
-`node_meets_requirements(requirements, node_spec)` in `node.py` checks each test's requirements against the node spec. If a test requires `gpu: true` but the node has `gpuCount <= 0`, the test is skipped on that node. If ALL tests are skipped for a node, no node pipeline is generated.
+`node_meets_requirements(requirements, node_spec)` in `node.py` checks each test's requirements against the node spec. If a test requires `gpu: true` but the node has `gpuCount <= 0`, the test is skipped on that node. If ALL tests are skipped for a node, no tasks are generated for that node.
 
 ## Known Constraints
 
 - **ConfigMap 1MB limit:** All Go source, cluster config, test suite config, build script, and aggregator script are packed into a single ConfigMap. A project with many tests may exceed Kubernetes' 1MB ConfigMap limit.
-- **Resource name length**: step and pipeline names are constructed by concatenating test_id, test name, node, and DAG step (e.g. `2-inference-wrk-4-vllm-server`, `node-2-inference-wrk-4`). These can exceed the 63-character Kubernetes name limit with long test or node names. A future fix is to hash the tuple into a short suffix and carry the full names in labels.
-- **One cluster pipeline per namespace**: the builder pod has a fixed name, so only one cluster pipeline can run at a time in a given namespace. This is typically sufficient — the node pipelines are the element that scales with cluster size, and a single cluster pipeline fans out to all target nodes in parallel.
-- **Sequential sweeps**: parameter sweep entries within a test run as separate pods in sequence. Failure behavior is controlled per-test via the `onFailure` field in `test_suite.yaml` (`continue`, `skipTest`, or `abort`). Each test is its own pipeline: `continue` sets `onError: continue` on inner steps so the test runs through failures; `skipTest` sets `onError: stopAndFail` on inner steps so the test stops on first failure but the cluster pipeline proceeds to the next test; `abort` sets `onError: stopAndFail` on both inner steps and the outer pipeline reference, stopping the cluster pipeline. In manual mode, scripts are independent and the operator controls whether to proceed.
+- **Resource name length**: step and task names are constructed by concatenating test_id, test name, node, and DAG step (e.g. `2-inference-wrk-4-vllm-server`). These can exceed the 63-character Kubernetes name limit with long test or node names. A future fix is to hash the tuple into a short suffix and carry the full names in labels.
+- **One cluster pipeline per namespace**: the builder pod has a fixed name, so only one cluster pipeline can run at a time in a given namespace. This is typically sufficient — the node task chains are the element that scales with cluster size, and a single cluster pipeline fans out to all target nodes in parallel.
+- **Sequential sweeps**: parameter sweep entries within a test run as separate pods in sequence. Failure behavior is controlled per-test via the `onFailure` field in `test_suite.yaml` (`continue`, `skipTest`, or `abort`). `continue` uses `onError: continue` with no `when` guards so all tasks run through failures. `skipTest` adds `when` guards that skip remaining tasks in the chain after a failure, but the next test proceeds. `abort` adds a guard task between tests that halts the pipeline if any node had a failure. In manual mode, scripts are independent and the operator controls whether to proceed.
 - **Cluster and project test scopes are not yet implemented.** Tests with `scope: cluster` or `scope: project` are loaded and validated but no steps are generated for them.

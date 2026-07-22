@@ -39,7 +39,7 @@ The generator reads test definitions (YAML + Go source), a cluster config descri
 
 - **Manual output** (`build/manual/`) — numbered shell scripts in execution order, plus a `manifests/` subdirectory with the YAML manifests they reference. Run the scripts in order with `bash`.
 
-- **Tekton output** (`build/tekton/`) — self-contained Tekton Tasks, Pipelines, and a PipelineRun. Pod manifests are embedded directly in task scripts. Apply the entire directory to run the full suite automatically.
+- **Tekton output** (`build/tekton/`) — a single flat Tekton Pipeline with all tasks as direct entries, plus a PipelineRun. Pod manifests are embedded directly in task scripts. Apply the entire directory to run the full suite automatically.
 
 Both outputs are derived from the same ordered step list, ensuring the underlying Kubernetes workloads (pods, services, configmaps) are equivalent regardless of execution method.
 
@@ -60,7 +60,7 @@ The generator separates step computation (what to run) from writers (how to run 
 
 2. **Manual writer** — writes the steps as standalone files to `build/manual/`, organized by phase (setup, test, teardown). Numbered `.sh` scripts in `manual/` are what the operator runs in order. Manifests are written to `manual/manifests/` as data files — each apply script references its manifest via `oc apply -f manifests/<name>.yaml`.
 
-3. **Tekton writer** — derives Tekton Tasks and Pipelines from the same steps. Pod manifests are embedded directly in Tekton Task scripts, so `build/tekton/` is self-contained.
+3. **Tekton writer** — derives Tekton Tasks and a single flat Pipeline from the same steps. Pod manifests are embedded directly in Tekton Task scripts, so `build/tekton/` is self-contained. The writer assigns `onError` values, `when` guards, and guard tasks based on each test's failure policy.
 
 ### Intermediate DAG (steps.json)
 
@@ -82,34 +82,36 @@ This enables a two-phase workflow for custom step injection:
 2. Edit the file — add, remove, or reorder steps
 3. Re-run with `--steps` to produce output from the modified DAG
 
-The file is validated on load with Pydantic (field types, metadata structure) and structural checks (unique pod names, source references point to existing generate steps, valid command and probe values, service name DNS-1035 compliance, and `onError` correctness).
+The file is validated on load with Pydantic (field types, metadata structure) and structural checks (unique pod names, source references point to existing generate steps, valid command and probe values, service name DNS-1035 compliance, and failure policy labels).
 
 ### Execution Flow
 
 ```
-Cluster Pipeline:
-  Setup:    apply-configmap -> create-builder -> build
+Cluster Pipeline (single flat pipeline):
+  Setup:    apply-configmap → create-builder → build
   Tests:    [tests in test_suite.yaml list order]
-              node-scoped: one node pipeline per node (parallel), each wrapping a test pipeline
-              cluster/project-scoped: single test pipeline (future)
-  Finally:  create-aggregator -> aggregate -> cleanup
+              node-scoped: parallel task chains (one per node), chained via runAfter
+              cluster/project-scoped: single task chain (future)
+              each test ends with a guard task (fan-in sync point)
+  Finally:  create-aggregator → aggregate → cleanup
 ```
 
-Each test pipeline runs a single test, with pods pinned via `nodeSelector` for node-scoped tests:
+Each test produces one task chain per node (for node-scoped tests), with pods pinned via `nodeSelector`:
 
 ```
-Execute DAG steps (persistent and ephemeral can be interleaved):
+Task chain per node:
   persistent: deploy pod, wait for readiness (stays up)
-  ephemeral:  run test pod -> cleanup (per sweep entry, releases resources)
-after all DAG steps: teardown persistent pods
-finally: safety-net teardown (always runs)
+  ephemeral:  run test pod → cleanup (per sweep entry, releases resources)
+  after all DAG steps: teardown persistent pods
+  finally-teardown: safety-net (always runs, no when guard)
+Guard task: fans in after all nodes' chains, checks for failures
 ```
 
 ### Test Scopes
 
 Tests are organized into three scopes based on where and how they run:
 
-- **Node** — validates individual nodes in isolation. Each node-scoped test runs independently on every target node listed in the cluster config, pinned via `nodeSelector`. All node pipelines execute in parallel. Use for hardware validation, GPU diagnostics, driver checks, and single-node inference benchmarks.
+- **Node** — validates individual nodes in isolation. Each node-scoped test runs independently on every target node listed in the cluster config, pinned via `nodeSelector`. All node task chains execute in parallel. Use for hardware validation, GPU diagnostics, driver checks, and single-node inference benchmarks.
 
 - **Cluster** *(future)* — validates behavior that spans multiple nodes but still requires node pinning. Cluster-scoped tests run sequentially with pods pinned to specific nodes. Use for multi-node coordination tests like distributed training, inter-node networking, or GPU-to-GPU communication across nodes.
 
@@ -131,9 +133,9 @@ spec:
 ```
 
 The `onFailure` field controls what happens when a step within the test fails (default: `continue`):
-- `continue` — continue executing remaining steps within this test before proceeding to the next test.
-- `skipTest` — skip remaining steps within this test (tear down its resources), proceed to the next test.
-- `abort` — abort the entire suite immediately.
+- `continue` — all steps run regardless of failures. Guard task proceeds to the next test.
+- `skipTest` — remaining steps in the failing node's chain are skipped (teardown still runs). Guard task proceeds to the next test.
+- `abort` — remaining steps in the failing node's chain are skipped, other nodes complete normally. Guard task halts the pipeline.
 
 The optional `timeout` field overrides the default `defaultTestTimeout` from `config.yaml` for this test's ephemeral pods.
 
@@ -235,7 +237,7 @@ bash build/manual/N-cleanup.sh
 oc apply -f build/tekton/
 ```
 
-This creates all Tasks, Pipelines, and triggers a PipelineRun. Monitor with:
+This creates all Tasks, the cluster Pipeline, and triggers a PipelineRun. Monitor with:
 
 ```bash
 oc get pipelineruns -w

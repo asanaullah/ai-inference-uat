@@ -1,0 +1,30 @@
+# Assisted by Claude Opus 4.6
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: {{ task_name }}
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ managed_by_label }}
+spec:
+  params:
+    - name: statuses
+      type: string
+      description: Comma-separated task statuses to check
+  steps:
+    - name: check
+      image: {{ ose_cli_image }}
+      script: |
+        echo "Checking task statuses: $(params.statuses)"
+        IFS=',' read -ra STATUSES <<< "$(params.statuses)"
+        FAILED=0
+        for s in "${STATUSES[@]}"; do
+          if [ "$s" = "Failed" ]; then
+            FAILED=1
+          fi
+        done
+        if [ "$FAILED" -eq 1 ]; then
+          echo "One or more tasks failed"
+          exit 1
+        fi
+        echo "All tasks passed"

@@ -9,6 +9,7 @@ from src.models import (
     Test,
     TestSuite,
     ToolConfig,
+    _validate_on_failure,
     _validate_section,
 )
 
@@ -280,7 +281,7 @@ class TestStepsFile:
                     "name": "cm",
                     "type": "generate",
                     "content": "x",
-                    "config": {"output": "manifest", "onError": "stopAndFail"},
+                    "config": {"output": "manifest"},
                 },
                 {
                     "name": "apply-cm",
@@ -289,7 +290,6 @@ class TestStepsFile:
                     "config": {
                         "command": "apply",
                         "probe": "none",
-                        "onError": "stopAndFail",
                     },
                 },
             ],
@@ -309,3 +309,37 @@ class TestStepsFile:
         data["metadata"]["toolConfig"] = {"bad": "data"}
         with pytest.raises(ValidationError):
             StepsFile(**data)
+
+
+# -- _validate_on_failure -----------------------------------------------------
+
+
+class TestValidateOnFailure:
+    def _cmd(self, **kw):
+        return {
+            "name": "s",
+            "type": "command",
+            "config": {"command": "apply", "probe": "none"},
+        } | kw
+
+    def test_test_step_with_valid_policies(self):
+        for policy in ("continue", "skipTest", "abort"):
+            _validate_on_failure([self._cmd(test="t", on_failure=policy)])
+
+    def test_test_step_with_invalid_policy(self):
+        with pytest.raises(ValueError, match="on_failure='bad'"):
+            _validate_on_failure([self._cmd(test="t", on_failure="bad")])
+
+    def test_test_step_with_empty_policy(self):
+        with pytest.raises(ValueError, match="on_failure=''"):
+            _validate_on_failure([self._cmd(test="t", on_failure="")])
+
+    def test_non_test_step_with_policy_raises(self):
+        with pytest.raises(ValueError, match="has no test"):
+            _validate_on_failure([self._cmd(test="", on_failure="continue")])
+
+    def test_non_test_step_without_policy(self):
+        _validate_on_failure([self._cmd(test="", on_failure="")])
+
+    def test_generate_steps_skipped(self):
+        _validate_on_failure([{"name": "g", "type": "generate", "on_failure": "bad"}])

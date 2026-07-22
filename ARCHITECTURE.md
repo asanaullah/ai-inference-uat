@@ -13,7 +13,7 @@ Test Definitions (YAML + Go) + Node List → python -m src → Steps ──┤  
                                        steps.json (optional re-entry point)
 ```
 
-After step computation, the generator validates pod and service names, assigns `onError` to command steps (setup steps get `stopAndFail`, global finally steps get `continue`, test steps derive from the test's `onFailure` policy, and per-test finally steps get no `onError` since Tekton `finally` always runs), and serializes the step list to `steps.json`. This file can be fed back to the generator via `--steps` to regenerate manual and Tekton output without re-reading test definitions — useful for editing steps externally or re-running writers with different options. When loading from `steps.json`, the generator re-validates structure, pod and service names, and `onError` correctness.
+After step computation, the generator validates pod and service names, labels each step with the test's failure policy from `test_suite.yaml`, and serializes the step list to `steps.json`. This file can be fed back to the generator via `--steps` to regenerate manual and Tekton output without re-reading test definitions — useful for editing steps externally or re-running writers with different options. When loading from `steps.json`, the generator re-validates structure, pod and service names, and failure policy labels. The Tekton writer translates failure policies into `onError` values, `when` guards, and guard tasks (see [Failure Policies](#failure-policies)).
 
 ## Input Format
 
@@ -37,7 +37,7 @@ Adding a test to the suite requires three things:
    The `onFailure` field controls what happens when a step within the test fails (default: `continue`):
    - `continue` — continue executing remaining steps within this test before proceeding to the next test.
    - `skipTest` — skip remaining steps within this test (tear down its resources), proceed to the next test.
-   - `abort` — abort the entire suite immediately.
+   - `abort` — all nodes complete the current test (pass or fail), then abort the entire suite.
 
    The optional `timeout` field overrides the cluster-level `defaultTestTimeout` for this test's ephemeral pods. If omitted, the default from `config.yaml` is used.
 
@@ -60,6 +60,14 @@ The generator takes the YAML definitions, accompanying Go files, and a list of t
 Every rendered manifest must be validated at generation time — invalid YAML, missing `apiVersion`, `kind`, or `metadata.name`/`metadata.generateName` must fail the generator immediately rather than producing broken manifests that only surface at `oc apply` time. Pod names are validated for RFC 1123 label compliance (lowercase alphanumeric, hyphens, etc.) and uniqueness after computation — a duplicate would cause resource collisions. Service names are validated for DNS-1035 compliance (must start with a lowercase letter, contain only lowercase alphanumeric characters and hyphens, and end with a lowercase alphanumeric character).
 
 Each step carries two names: a human-readable **step name** (used for manual script filenames, PVC directory paths, and Tekton filenames on disk) and a **resource name** (used for Kubernetes `metadata.name` on pods, services, and Tekton tasks). The resource name substitutes a sanitized version of the node name: invalid characters (dots, underscores, etc.) are replaced with dashes, uppercase is lowercased, and names longer than 16 characters are truncated to 12 characters with a 4-character hash suffix. When the node name is short and already RFC 1123 compliant (e.g. `wrk-4`), both names are identical.
+
+### Failure Policies
+
+Each test declares an `onFailure` policy in `test_suite.yaml`. The generator labels each step with its test's failure policy. Writers are responsible for translating these policies into backend-specific mechanisms.
+
+- **`continue`** — continue executing remaining steps within this test before proceeding to the next test. A failing step does not affect other steps or other nodes.
+- **`skipTest`** — skip remaining steps within this test on the failing node (tear down its resources), then proceed to the next test. Other nodes running the same test are unaffected.
+- **`abort`** — all nodes complete the current test (pass or fail), then abort the entire suite. No further tests run on any node.
 
 ### Output Structure
 
@@ -92,13 +100,8 @@ build/
 │   ├── N-aggregate.sh                                   ← exec script
 │   └── N-cleanup.sh                                     ← delete-all script
 └── tekton/
-    ├── cluster-pipeline.yaml
-    ├── node-1-component-wrk-4.yaml              (node-scoped: one per node × test)
-    ├── node-2-inference-wrk-4.yaml
-    ├── test-1-component-wrk-4.yaml              (node-scoped: one per node × test)
-    ├── test-2-inference-wrk-4.yaml
-    ├── test-3-network.yaml                      (cluster/project-scoped: one per test, planned)
-    ├── task-*.yaml
+    ├── cluster-pipeline.yaml                    (single flat pipeline)
+    ├── task-*.yaml                              (one per command step, plus one guard task per test)
     └── pipelinerun.yaml
 ```
 
@@ -108,13 +111,15 @@ Manifests (`.yaml`) are written to `manual/manifests/` without a counter prefix 
 
 ## Execution
 
-Execution uses three levels of Tekton Pipelines: **cluster**, **node**, and **test**. Every test gets its own test pipeline with a `finally` block for cleanup. Node-scoped tests each get a node pipeline per node (one node pipeline per test × node combination, not one per node). The cluster pipeline sequences tests in `test_suite.yaml` list order, referencing node pipelines for node-scoped tests and test pipelines directly for cluster/project-scoped tests.
+### Tekton Writer
 
-### Cluster Pipeline
+The Tekton writer produces a single flat Tekton Pipeline. All tasks — setup, test, and teardown — are entries in one cluster pipeline. Node-scoped tests produce one task chain per node, running in parallel. Failure policies are implemented through `onError`, `when` expressions, and guard tasks. The cluster pipeline sequences tests in `test_suite.yaml` list order. Requires `scope-when-expressions-to-task: true` (default since Tekton Pipelines v0.54).
+
+#### Cluster Pipeline
 
 ```
-apply-configmap → create-builder → build → [tests in list order] → finally: create-aggregator → aggregate → cleanup
-                                                                            (sequenced via runAfter)
+apply-configmap → create-builder → build → [test task chains] → finally: create-aggregator → aggregate → cleanup
+                                                                          (sequenced via runAfter)
 ```
 
 **1. Apply ConfigMap** — creates a ConfigMap containing all Go source, cluster config, test suite config, build script, and aggregator script.
@@ -123,49 +128,95 @@ apply-configmap → create-builder → build → [tests in list order] → final
 
 **3. Build binaries** — copies source from ConfigMap mounts into the PVC, generates a `go.mod` with the Ginkgo version pinned in `config.yaml`, and compiles one Ginkgo binary per unique test name at `/workspace/<test>/test.bin`. If the same test name appears multiple times in `test_suite.yaml` (e.g. with different failure policies), all instances share the same binary.
 
-**4. Tests** — executed in `test_suite.yaml` list order. Each test produces one pipeline entry in the cluster pipeline. Scope determines the shape:
+**4. Tests** — each test's tasks are placed directly in the cluster pipeline as individual `taskRef` entries. Scope determines the shape:
 
-- **Node** tests produce one node pipeline per target node, all running in parallel (no `runAfter` between nodes for the same test). Each node pipeline wraps a single test pipeline via `pipelineRef`. The next test in the list waits for all node pipelines of the previous test to complete. If a test fails on one node, the other nodes' pipelines for that test still run to completion (Tekton does not cancel in-flight parallel tasks). What happens next depends on `onFailure`: with `abort`, the node pipeline references have `onError: stopAndFail`, so a failure on *any single node* is enough to stop the cluster pipeline — the successes on other nodes do not override it. With `continue` or `skipTest`, the references have `onError: continue`, so failures on any or all nodes are ignored and the cluster pipeline proceeds to the next test.
-- **Cluster** tests produce a single test pipeline directly referenced in the cluster pipeline. They orchestrate tasks across nodes — for example, placing a server on node A and a client on node B, then collecting results. *(not yet implemented — step computation returns an empty list, and the Tekton writer rejects any non-node-scoped test steps with a hard error)*
-- **Project** tests produce a single test pipeline directly referenced in the cluster pipeline, without node affinity. They validate project-wide concerns (quotas, RBAC, network policies). *(not yet implemented — same as cluster)*
+- **Node** tests produce one task chain per target node, all running in parallel (no `runAfter` between nodes for the same test). Within each chain, tasks are sequential via `runAfter`. Per-test cleanup (`finally-teardown`) is the last task in each node chain with no `when` guard — it always runs regardless of earlier failures. The guard task fans in after all node chains complete. Pods are pinned to the target node via `nodeSelector` in the pod manifests.
 
-Because each test is a separate entry in the cluster pipeline, scopes can be freely interleaved (e.g. node test → cluster test → node test) without any grouping constraints.
+  ```
+  wrk-6: A₆ → B₆ → C₆ → teardown₆ ─┐
+                                       ├─→ guard-test-N → Next test
+  wrk-4: A₄ → B₄ → C₄ → teardown₄ ─┘
+  ```
+- **Cluster** tests produce a single task chain directly in the cluster pipeline. They orchestrate tasks across nodes — for example, placing a server on node A and a client on node B, then collecting results. *(not yet implemented — step computation returns an empty list, and the Tekton writer rejects any non-node-scoped test steps with a hard error)*
+- **Project** tests produce a single task chain directly in the cluster pipeline, without node affinity. They validate project-wide concerns (quotas, RBAC, network policies). *(not yet implemented — same as cluster)*
+
+Every test, regardless of scope, ends with a guard task. The guard task fans in after all the test's teardown tasks and serves as the single sync point between tests — the next test's first tasks `runAfter` the guard task. The guard task's `onError` is set according to the test's failure policy (see [Failure Policy Handling](#failure-policy-handling)).
+
+Because each test's tasks are flat entries in the cluster pipeline, scopes can be freely interleaved (e.g. node test → cluster test → node test) without any grouping constraints.
+
+All tasks reference the pipeline run name directly via `$(context.pipelineRun.name)`.
+
+#### Failure Policy Handling
+
+Each test declares an `onFailure` policy (`continue`, `skipTest`, `abort`). The Tekton writer translates these into `onError` values, `when` guards on individual tasks, and a guard task after each test.
+
+**Guard tasks:** Every test gets a guard task that fans in after all node teardowns. The guard task is the single sync point between tests — the next test's first tasks `runAfter` the guard task. The guard task receives all non-teardown task statuses across nodes as a comma-separated parameter and exits non-zero if any value is `Failed`. The `onError` on the guard task determines the consequence:
+
+- `continue` or `skipTest` → `onError: continue` (pipeline proceeds to the next test regardless)
+- `abort` → `onError: stopAndFail` (pipeline halts and jumps to cluster `finally`)
+
+**`onError` assignment:** The Tekton writer assigns `onError` to each task based on its role:
+
+| Step category | `onError` |
+|---|---|
+| Setup steps | `stopAndFail` |
+| All test steps | `continue` |
+| Per-test finally steps (finally-teardown) | `continue` |
+| Global finally steps (aggregator, cleanup) | `continue` |
+| Guard tasks (`continue`/`skipTest` policy) | `continue` |
+| Guard tasks (`abort` policy) | `stopAndFail` |
+
+**Policy mechanics:**
+
+- **`continue`** — no `when` guards on any steps of the test. Every step runs regardless of failures. Guard task with `onError: continue` — pipeline always proceeds to the next test.
+
+- **`skipTest`** — `when` guards on non-first steps within each node chain. If a step fails, remaining guarded steps on that node are skipped; the per-test teardown (no `when` guard) still runs. Other nodes are unaffected. Guard task with `onError: continue` — pipeline always proceeds to the next test.
+
+- **`abort`** — `when` guards on non-first steps (same as `skipTest`). Other nodes complete the test normally (all remaining steps and teardown). Guard task with `onError: stopAndFail` — if any step failed on any node, the pipeline halts and jumps to cluster `finally`. No further tests run on any node.
+
+```
+continue policy (2 nodes):
+  wrk-6: A₆ → B₆ → C₆ → teardown₆ ─┐
+                                       ├─→ guard-test-N (continue) → Next test
+  wrk-4: A₄ → B₄ → C₄ → teardown₄ ─┘
+  (no when guards · all tasks run regardless)
+
+skipTest policy (2 nodes):
+  wrk-6: A₆ → B₆ → C₆ → teardown₆ ─┐
+                                       ├─→ guard-test-N (continue) → Next test
+  wrk-4: A₄ → B₄ → C₄ → teardown₄ ─┘
+  (B, C: when-guarded · teardown: always runs)
+
+abort policy (2 nodes):
+  wrk-6: A₆ → B₆ → C₆ → teardown₆ ─┐
+                                       ├─→ guard-test-N (stopAndFail) → Next test
+  wrk-4: A₄ → B₄ → C₄ → teardown₄ ─┘
+  (B, C: when-guarded · teardown: always runs)
+```
+
+Each `when` guard checks `$(tasks.<predecessor>.status) in ["Succeeded"]`. When a task is skipped by its guard, its status becomes `None`, causing downstream guarded tasks in the same chain to also skip. The per-test teardown has no `when` guard, so it runs regardless — `scope-when-expressions-to-task` prevents the skip from cascading past unguarded tasks.
 
 **5. Aggregate results (finally)** — creates an aggregator pod, then execs into it to read individual JUnit/JSON reports and generate a consolidated report. Runs after all tests complete (success or failure). Must complete before cleanup.
 
 **6. Cleanup (finally)** — deletes all pods, services, and deployments matching the managed-by label, and the ConfigMap. Ordered after aggregation within the finally block (Tekton finally tasks run in parallel by default, so explicit ordering is required).
 
-### Node Pipeline
+#### Test Task Chains
 
-Each node pipeline runs exactly one test on one node. It contains a single `pipelineRef` to the test pipeline. Pods within the test are pinned to the target node via `nodeSelector` in the pod manifests. There is one node pipeline per (node × node-scoped test) combination.
-
-```
-node-1-component-wrk-4:
-  test-1-component-wrk-4 (pipelineRef → test-1-component-wrk-4)
-
-node-2-inference-wrk-4:
-  test-2-inference-wrk-4 (pipelineRef → test-2-inference-wrk-4)
-```
-
-### Test Pipeline
-
-Each test is its own pipeline. Its `finally` block contains a `finally-teardown` step that cleans up all the test's resources, hardcoded to always run so that resources are freed even if a step fails and `onError` stops execution.
-
-DAG steps are processed in the order they appear in the test definition. Persistent and ephemeral steps can be interleaved. For each DAG step:
+Each test produces one task chain per node (for node-scoped tests) or a single chain (for cluster/project-scoped tests). DAG steps are processed in the order they appear in the test definition. Persistent and ephemeral steps can be interleaved. For each DAG step:
 
 - **Persistent** (`persistsThroughSweep: true`): deploy the pod (and optional Service), wait for readiness. The resource stays up for subsequent steps to use.
 - **Ephemeral** (`persistsThroughSweep: false`, the default): apply a test pod (and optional Service) and wait for completion. If the step has a `parameterSweep`, one pod is created per entry. Results write to the PVC. After each ephemeral pod completes, a cleanup step deletes pods, services, and deployments matching `test=<name>,node=<node>,sweep=<sweep_id>` labels to release resources like GPUs for subsequent steps.
 
-After all DAG steps complete, persistent resources are torn down — deleting pods, services, and deployments filtered by `test=<name>,node=<node>` labels. `finally-teardown` runs regardless of success or failure, cleaning up all remaining resources for the test — both persistent and ephemeral — using the same label filter and resource types.
+After all DAG steps complete, persistent resources are torn down — deleting pods, services, and deployments filtered by `test=<name>,node=<node>` labels. The `finally-teardown` task runs as the last task in the chain with no `when` guard, cleaning up all remaining resources for the test — both persistent and ephemeral — using the same label filter and resource types. With `scope-when-expressions-to-task`, it runs even when preceding tasks were skipped.
 
 ```
-test-2-inference-wrk-4:
-  tasks: 2-inference-wrk-4-vllm-server
+test-2-inference-wrk-4 chain:
+  2-inference-wrk-4-vllm-server
     → 2-inference-wrk-4-pass-fail → 2-inference-wrk-4-cleanup-pass-fail
     → 2-inference-wrk-4-sweep-short-burst → 2-inference-wrk-4-cleanup-sweep-short-burst
     → ...
     → 2-inference-wrk-4-teardown
-  finally: 2-inference-wrk-4-finally-teardown
+    → 2-inference-wrk-4-finally-teardown     (no when guard, always runs)
 ```
 
 ## Results
@@ -213,12 +264,12 @@ The base path is a cluster-level setting that scopes results to a particular tes
 | DAG resources persist through sweep | Expensive resources (GPU-backed servers) deploy once; the parameter sweep reuses them. |
 | One Tekton task per DAG step | Each non-persistent step gets its own task (not one per test). Sweep iterations each get a separate test pod and task, keeping the Tekton task graph explicit. |
 | Ephemeral pod cleanup after each step | Non-persistent pods are deleted immediately after completion to release resources (e.g. GPUs) for subsequent steps. Each ephemeral step's pod and service carry a `sweep` label for targeted deletion without affecting persistent resources. |
-| One node pipeline per test × node | Each node-scoped test gets its own node pipeline per node (not one node pipeline grouping all tests). This keeps the cluster pipeline's test ordering flat — each test is a separate entry, and node pipelines for the same test run in parallel while different tests run in sequence. A single cluster pipeline manages shared resources (builder pod, aggregation). |
-| Per-test failure policy | Each test declares its own `onFailure` (`continue`, `skipTest`, `abort`) instead of a single global flag. Each test is wrapped in its own pipeline (Pipeline-in-Pipeline). For node-scoped tests, `onFailure` controls behavior at two levels: **inner** (test pipeline step-level `onError`) and **outer** (node pipeline's `pipelineRef` to the test pipeline). Cluster/project-scoped tests only have the inner level, since their test pipeline is referenced directly in the cluster pipeline. `continue`: inner steps get `onError: continue`, outer gets `onError: continue`. `skipTest`: inner steps get `onError: stopAndFail`, outer gets `onError: continue` — the test stops on first failure, cleans up via `finally`, and the cluster pipeline proceeds to the next test. `abort`: inner steps get `onError: stopAndFail`, outer gets `onError: stopAndFail` — the cluster pipeline halts. The test pipeline's `finally` block always runs cleanup regardless of errors. |
+| One task chain per test × node | Each node-scoped test gets its own task chain per node, placed directly in the cluster pipeline. Chains for the same test run in parallel while different tests run in sequence. A single Pipeline contains all tasks. |
+| Per-test failure policy | Each test declares its own `onFailure` (`continue`, `skipTest`, `abort`) instead of a single global flag. The flat pipeline implements these through two mechanisms: **`when` guards** on tasks within each node chain (skip remaining tasks after a failure), and a **guard task** after every test (fan in all results and enforce the failure policy). The guard task's `onError` is the single point where the policy takes effect: `continue`/`skipTest` → `onError: continue`, `abort` → `onError: stopAndFail`. `continue`: no `when` guards — every task runs regardless. `skipTest`: `when` guards skip remaining tasks on the failing node; other nodes and subsequent tests are unaffected. `abort`: same within-chain behavior as `skipTest`, but the guard task halts the pipeline if any node had a failure. The per-test `finally-teardown` task has no `when` guard and always runs, cleaning up resources even when earlier tasks are skipped. Requires `scope-when-expressions-to-task: true` (default since Tekton v0.54). |
 
 ## Constraints
 
 - **ConfigMap 1MB limit**: all Go source, cluster config, test suite config, build script, and aggregator script are packed into a single ConfigMap. A project with many tests may exceed Kubernetes' 1MB ConfigMap limit.
 - **Resource name length**: resource names are constructed by concatenating test_id, test name, sanitized node name, and DAG step (e.g. `2-inference-wrk-4-vllm-server`, `node-2-inference-wrk-4`). Node names are capped at 16 characters (12 + 4-char hash if longer), but the full resource name can still exceed the 63-character Kubernetes name limit with long test or DAG step names.
-- **One cluster pipeline per namespace**: the builder pod has a fixed name, so only one cluster pipeline can run at a time in a given namespace. This is typically sufficient — the node pipelines are the element that scales with cluster size, and a single cluster pipeline fans out to all target nodes in parallel.
-- **Sequential sweeps**: parameter sweep entries within a test run as separate pods in sequence. Failure behavior is controlled per-test via the `onFailure` field in `test_suite.yaml` (`continue`, `skipTest`, or `abort`). Each test is its own pipeline: `continue` sets `onError: continue` on inner steps so the test runs through failures; `skipTest` sets `onError: stopAndFail` on inner steps so the test stops on first failure but the cluster pipeline proceeds to the next test; `abort` sets `onError: stopAndFail` on both inner steps and the outer pipeline reference, stopping the cluster pipeline. In manual mode, scripts are independent and the operator controls whether to proceed.
+- **One cluster pipeline per namespace**: the builder pod has a fixed name, so only one cluster pipeline can run at a time in a given namespace. This is typically sufficient — the task chains are the element that scales with cluster size, and a single cluster pipeline fans out to all target nodes in parallel.
+- **Sequential sweeps**: parameter sweep entries within a test run as separate pods in sequence. Failure behavior is controlled per-test via the `onFailure` field in `test_suite.yaml` (`continue`, `skipTest`, or `abort`). `continue` uses `onError: continue` with no `when` guards so all tasks run through failures. `skipTest` adds `when` guards that skip remaining tasks in the chain after a failure, but the next test proceeds. `abort` adds a guard task between tests that halts the pipeline if any node had a failure. In manual mode, scripts are independent and the operator controls whether to proceed.

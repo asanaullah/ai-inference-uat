@@ -182,7 +182,6 @@ def main() -> None:
         all_steps = setup_steps + test_steps + teardown_steps
         _validate_unique_pod_names(all_steps)
         _validate_service_names(all_steps)
-        assign_on_error(all_steps)
 
         try:
             write_steps_file(all_steps, tc, cs, output_dir / "steps.json")
@@ -236,21 +235,6 @@ def _validate_unique_pod_names(steps: list[Step]) -> None:
             if pod_name in pod_names:
                 raise ValueError(f"Duplicate pod name '{pod_name}'")
             pod_names.add(pod_name)
-
-
-def assign_on_error(steps: list[Step]) -> None:
-    for step in steps:
-        if step.type != "command":
-            continue
-        if step.finally_step and step.test:
-            continue
-        if step.finally_step and not step.test:
-            step.config["onError"] = "continue"
-            continue
-        if step.test and step.on_failure == "continue":
-            step.config["onError"] = "continue"
-        else:
-            step.config["onError"] = "stopAndFail"
 
 
 def compute_setup_steps(
@@ -634,13 +618,14 @@ def write_tekton(
         shutil.rmtree(tekton_dir)
     tekton_dir.mkdir(parents=True)
 
+    ts = "$(context.pipelineRun.name)"
+
     setup_steps = [s for s in steps if s.phase == "setup"]
     test_steps = [s for s in steps if s.phase == "test"]
     teardown_steps = [s for s in steps if s.phase == "teardown"]
 
     gen_lookup = _build_generate_lookup(steps)
 
-    # Generate setup Tekton tasks
     setup_task_names = _write_tekton_tasks(
         setup_steps,
         gen_lookup,
@@ -648,13 +633,9 @@ def write_tekton(
         cs,
         jinja_env,
         tekton_dir,
-        timestamp_var="$(params.timestamp)",
+        timestamp_var=ts,
     )
 
-    # Derive node→steps grouping and test order from the flat list.
-    # Node/test pipelines use $(params.timestamp), NOT $(context.pipelineRun.name),
-    # because in Pipeline-in-Pipeline the context resolves to the child
-    # PipelineRun name which differs from the parent.
     test_order = _extract_test_order(test_steps)
 
     non_node_steps = [s for s in test_steps if not s.node]
@@ -669,25 +650,31 @@ def write_tekton(
     for s in test_steps:
         node_groups.setdefault(s.node, []).append(s)
 
-    node_safe_names = {n.name: n.sanitized_name or n.name for n in cs.nodes}
+    # Write all test Tekton Task YAMLs and build flat pipeline entries
+    test_task_entries: list[dict] = []
+    # Track last task name per node-chain for runAfter and guard fan-in
+    # Key: (test_id, node) → last task name in that chain
+    chain_last: dict[tuple[str, str], str] = {}
+    # Track first task name per node-chain for runAfter from previous guard
+    chain_first: dict[tuple[str, str], str] = {}
+    # Track non-teardown task names per test for guard status checking
+    test_status_tasks: dict[str, list[str]] = {}
+    guard_task_names: dict[str, str] = {}
 
-    for node, n_steps in node_groups.items():
-        safe_node = node_safe_names.get(node, node)
-        node_gen_lookup = _build_generate_lookup(n_steps)
-        node_gen_lookup.update(gen_lookup)
+    for test_id, test_name, test_on_failure in test_order:
+        uses_when = test_on_failure in ("skipTest", "abort")
+        test_status_tasks[test_id] = []
 
-        test_groups: dict[str, list[Step]] = {}
-        for step in n_steps:
-            test_groups.setdefault(step.test_id, []).append(step)
+        for node, n_steps in node_groups.items():
+            node_gen_lookup = _build_generate_lookup(n_steps)
+            node_gen_lookup.update(gen_lookup)
 
-        for test_id, test_name, test_on_failure in test_order:
-            if test_id not in test_groups:
+            t_steps = [s for s in n_steps if s.test_id == test_id]
+            if not t_steps:
                 continue
-            t_steps = test_groups[test_id]
 
-            test_task_entries: list[dict] = []
-            test_finally_entries: list[dict] = []
             prev_step: str | None = None
+            first_set = False
 
             for step in t_steps:
                 if step.type != "command":
@@ -695,10 +682,9 @@ def write_tekton(
 
                 task_name = step.resource_name or step.name
                 manifest = _resolve_manifest(step, node_gen_lookup)
-                manifest = manifest.replace("__TIMESTAMP__", "$(params.timestamp)")
+                manifest = manifest.replace("__TIMESTAMP__", ts)
                 args = [
-                    a.replace("__TIMESTAMP__", "$(params.timestamp)")
-                    for a in step.config.get("args", [])
+                    a.replace("__TIMESTAMP__", ts) for a in step.config.get("args", [])
                 ]
 
                 task_content = _render_tekton_task(
@@ -712,73 +698,70 @@ def write_tekton(
                 )
                 (tekton_dir / f"task-{step.name}.yaml").write_text(task_content)
 
-                entry = {
+                entry: dict = {
                     "name": task_name,
-                    "ref_type": "task",
                     "ref_name": task_name,
-                    "params": [{"name": "timestamp", "value": "$(params.timestamp)"}],
                     "run_after": [prev_step] if prev_step else [],
-                    "on_error": step.config.get("onError", "stopAndFail"),
+                    "on_error": "continue",
                 }
 
-                if step.finally_step:
-                    entry["run_after"] = []
-                    entry["on_error"] = None
-                    test_finally_entries.append(entry)
-                else:
-                    test_task_entries.append(entry)
-                    prev_step = task_name
-
-            test_pipeline_name = f"test-{test_id}-{test_name}-{safe_node}"
-            test_pipeline = render_manifest(
-                jinja_env,
-                "pipeline.yaml.j2",
-                {
-                    "pipeline_name": test_pipeline_name,
-                    "namespace": cs.namespace,
-                    "managed_by_label": tc.managed_by_label,
-                    "params": [{"name": "timestamp", "type": "string"}],
-                    "tasks": test_task_entries,
-                    "finally_tasks": test_finally_entries,
-                },
-            )
-            (tekton_dir / f"{test_pipeline_name}.yaml").write_text(test_pipeline)
-
-            outer_on_error = (
-                "continue"
-                if test_on_failure in ("continue", "skipTest")
-                else "stopAndFail"
-            )
-            node_pipeline_name = f"node-{test_id}-{test_name}-{safe_node}"
-            node_pipeline = render_manifest(
-                jinja_env,
-                "pipeline.yaml.j2",
-                {
-                    "pipeline_name": node_pipeline_name,
-                    "namespace": cs.namespace,
-                    "managed_by_label": tc.managed_by_label,
-                    "params": [{"name": "timestamp", "type": "string"}],
-                    "tasks": [
+                if uses_when and prev_step and not step.finally_step:
+                    entry["when_expressions"] = [
                         {
-                            "name": test_pipeline_name,
-                            "ref_type": "pipeline",
-                            "ref_name": test_pipeline_name,
-                            "params": [
-                                {
-                                    "name": "timestamp",
-                                    "value": "$(params.timestamp)",
-                                }
-                            ],
-                            "run_after": [],
-                            "on_error": outer_on_error,
+                            "input": f"$(tasks.{prev_step}.status)",
+                            "operator": "in",
+                            "values": ["Succeeded"],
                         }
-                    ],
-                    "finally_tasks": [],
-                },
-            )
-            (tekton_dir / f"{node_pipeline_name}.yaml").write_text(node_pipeline)
+                    ]
 
-    # Generate teardown Tekton tasks (same pattern as setup)
+                test_task_entries.append(entry)
+
+                if not step.finally_step:
+                    test_status_tasks[test_id].append(task_name)
+
+                if not first_set:
+                    chain_first[(test_id, node)] = task_name
+                    first_set = True
+                prev_step = task_name
+
+            if prev_step:
+                chain_last[(test_id, node)] = prev_step
+
+        # Generate guard task for this test
+        guard_name = f"guard-{test_id}-{test_name}"
+        guard_on_error = (
+            "continue" if test_on_failure in ("continue", "skipTest") else "stopAndFail"
+        )
+        fan_in = [
+            chain_last[(test_id, n)] for n in node_groups if (test_id, n) in chain_last
+        ]
+
+        status_refs = ",".join(
+            f"$(tasks.{t}.status)" for t in test_status_tasks[test_id]
+        )
+        guard_task_content = render_manifest(
+            jinja_env,
+            "task-guard.yaml.j2",
+            {
+                "task_name": guard_name,
+                "namespace": cs.namespace,
+                "managed_by_label": tc.managed_by_label,
+                "ose_cli_image": tc.ose_cli_image,
+            },
+        )
+        (tekton_dir / f"task-{guard_name}.yaml").write_text(guard_task_content)
+
+        test_task_entries.append(
+            {
+                "name": guard_name,
+                "ref_name": guard_name,
+                "run_after": fan_in,
+                "on_error": guard_on_error,
+                "params": [{"name": "statuses", "value": status_refs}],
+            }
+        )
+        guard_task_names[test_id] = guard_name
+
     teardown_task_names = _write_tekton_tasks(
         teardown_steps,
         gen_lookup,
@@ -786,13 +769,14 @@ def write_tekton(
         cs,
         jinja_env,
         tekton_dir,
-        timestamp_var="$(params.timestamp)",
+        timestamp_var=ts,
     )
 
-    # Build cluster pipeline
+    # Build cluster pipeline — all entries are flat
     cluster_tasks: list[dict] = []
     prev: str | None = None
 
+    # Setup tasks
     for step_name in setup_task_names:
         step = _find_step(setup_steps, step_name, "command")
         if not step:
@@ -801,48 +785,31 @@ def write_tekton(
         cluster_tasks.append(
             {
                 "name": res,
-                "ref_type": "task",
                 "ref_name": res,
-                "params": [
-                    {"name": "timestamp", "value": "$(context.pipelineRun.name)"}
-                ],
                 "run_after": [prev] if prev else [],
                 "on_error": "stopAndFail",
             }
         )
         prev = res
 
-    prev_entries = [prev] if prev else []
+    # Link first test tasks to setup (or previous guard)
+    prev_guard: str | None = None
     for test_id, test_name, test_on_failure in test_order:
-        on_error = (
-            "continue" if test_on_failure in ("continue", "skipTest") else "stopAndFail"
-        )
-        current_entries = []
+        run_after_target = prev_guard if prev_guard else prev
         for node in node_groups:
-            node_has_test = any(s.test_id == test_id for s in node_groups[node])
-            if not node_has_test:
-                continue
-            sn = node_safe_names.get(node, node)
-            entry_name = f"node-{test_id}-{test_name}-{sn}"
-            cluster_tasks.append(
-                {
-                    "name": entry_name,
-                    "ref_type": "pipeline",
-                    "ref_name": entry_name,
-                    "params": [
-                        {
-                            "name": "timestamp",
-                            "value": "$(context.pipelineRun.name)",
-                        }
-                    ],
-                    "run_after": list(prev_entries),
-                    "on_error": on_error,
-                }
-            )
-            current_entries.append(entry_name)
-        if current_entries:
-            prev_entries = current_entries
+            key = (test_id, node)
+            if key in chain_first:
+                first_entry_name = chain_first[key]
+                for entry in test_task_entries:
+                    if entry["name"] == first_entry_name:
+                        if run_after_target:
+                            entry["run_after"] = [run_after_target]
+                        break
+        prev_guard = guard_task_names.get(test_id)
 
+    cluster_tasks.extend(test_task_entries)
+
+    # Cluster finally (teardown)
     cluster_finally: list[dict] = []
     prev_finally: str | None = None
     for task_name in teardown_task_names:
@@ -853,13 +820,9 @@ def write_tekton(
         cluster_finally.append(
             {
                 "name": res,
-                "ref_type": "task",
                 "ref_name": res,
-                "params": [
-                    {"name": "timestamp", "value": "$(context.pipelineRun.name)"}
-                ],
                 "run_after": [prev_finally] if prev_finally else [],
-                "on_error": step.config.get("onError", "stopAndFail"),
+                "on_error": "continue",
             }
         )
         prev_finally = res
@@ -871,7 +834,6 @@ def write_tekton(
             "pipeline_name": "uat-cluster",
             "namespace": cs.namespace,
             "managed_by_label": tc.managed_by_label,
-            "params": [],
             "tasks": cluster_tasks,
             "finally_tasks": cluster_finally,
         },

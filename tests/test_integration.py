@@ -46,7 +46,7 @@ class TestOutputStructure:
         tekton = build_dir / "tekton"
         assert (tekton / "cluster-pipeline.yaml").exists()
         assert (tekton / "pipelinerun.yaml").exists()
-        assert any(f.name.startswith("node-") for f in tekton.iterdir())
+        assert any(f.name.startswith("task-guard-") for f in tekton.iterdir())
 
     def test_steps_json(self, build_dir):
         data = json.loads((build_dir / "steps.json").read_text())
@@ -107,28 +107,30 @@ class TestTektonOutput:
             content = f.read_text()
             assert "__TIMESTAMP__" not in content, f"Unsubstituted in {f.name}"
 
-    def test_per_test_pipelines(self, build_dir):
+    def test_flat_pipeline_all_task_refs(self, build_dir):
         tekton = build_dir / "tekton"
-        test_pipelines = [f for f in tekton.iterdir() if f.name.startswith("test-")]
-        assert len(test_pipelines) > 0, "No per-test pipeline files generated"
-
-    def test_node_pipeline_uses_pipeline_ref(self, build_dir):
-        tekton = build_dir / "tekton"
-        for f in tekton.glob("node-*.yaml"):
-            doc = yaml.safe_load(f.read_text())
-            tasks = doc["spec"]["tasks"]
-            for task in tasks:
-                assert "pipelineRef" in task, (
-                    f"Node pipeline task {task['name']} uses taskRef instead of pipelineRef"
-                )
-
-    def test_test_pipeline_has_finally(self, build_dir):
-        tekton = build_dir / "tekton"
-        for f in tekton.glob("test-*.yaml"):
-            doc = yaml.safe_load(f.read_text())
-            assert "finally" in doc["spec"], (
-                f"Test pipeline {f.name} missing finally block"
+        doc = yaml.safe_load((tekton / "cluster-pipeline.yaml").read_text())
+        for task in doc["spec"]["tasks"]:
+            assert "taskRef" in task, f"Task {task['name']} missing taskRef"
+            assert "pipelineRef" not in task, (
+                f"Task {task['name']} has pipelineRef (expected flat pipeline)"
             )
+
+    def test_guard_tasks_exist(self, build_dir):
+        tekton = build_dir / "tekton"
+        guard_files = [f for f in tekton.iterdir() if f.name.startswith("task-guard-")]
+        assert len(guard_files) > 0, "No guard task files generated"
+
+    def test_no_nested_pipeline_files(self, build_dir):
+        tekton = build_dir / "tekton"
+        node_pipelines = [f for f in tekton.iterdir() if f.name.startswith("node-")]
+        test_pipelines = [
+            f
+            for f in tekton.iterdir()
+            if f.name.startswith("test-") and not f.name.startswith("test-pod")
+        ]
+        assert len(node_pipelines) == 0, "Node pipeline files should not exist"
+        assert len(test_pipelines) == 0, "Test pipeline files should not exist"
 
 
 class TestStepsRoundTrip:

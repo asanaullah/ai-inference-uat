@@ -253,45 +253,27 @@ def _validate_section(steps: list[dict[str, Any]], section: str) -> None:
                     )
 
 
-def _validate_on_error(steps: list[dict[str, Any]]) -> None:
+_VALID_ON_FAILURE = {"continue", "skipTest", "abort"}
+
+
+def _validate_on_failure(steps: list[dict[str, Any]]) -> None:
     for s in steps:
         if s.get("type") != "command":
             continue
-        config = s.get("config", {})
         test = s.get("test", "")
-        finally_step = s.get("finally_step", False)
         on_failure = s.get("on_failure", "")
-        has_on_error = "onError" in config
-
-        if finally_step and test:
-            if has_on_error:
+        if test:
+            if on_failure not in _VALID_ON_FAILURE:
                 raise ValueError(
-                    f"Step '{s.get('name')}' is a per-test finally step "
-                    f"and must not have onError"
+                    f"Step '{s.get('name')}' has test='{test}' but "
+                    f"on_failure='{on_failure}' "
+                    f"(expected one of {_VALID_ON_FAILURE})"
                 )
-        elif finally_step and not test:
-            if not has_on_error or config["onError"] != "continue":
+        else:
+            if on_failure:
                 raise ValueError(
-                    f"Step '{s.get('name')}' is a global finally step "
-                    f"and must have onError=continue"
-                )
-        elif test and on_failure == "continue":
-            if not has_on_error or config["onError"] != "continue":
-                raise ValueError(
-                    f"Step '{s.get('name')}' has on_failure=continue "
-                    f"and must have onError=continue"
-                )
-        elif test and on_failure != "continue":
-            if not has_on_error or config["onError"] != "stopAndFail":
-                raise ValueError(
-                    f"Step '{s.get('name')}' has on_failure={on_failure} "
-                    f"and must have onError=stopAndFail"
-                )
-        elif not test and not finally_step:
-            if not has_on_error or config["onError"] != "stopAndFail":
-                raise ValueError(
-                    f"Step '{s.get('name')}' is a setup step "
-                    f"and must have onError=stopAndFail"
+                    f"Step '{s.get('name')}' has no test but "
+                    f"on_failure='{on_failure}' (expected empty)"
                 )
 
 
@@ -308,5 +290,5 @@ class StepsFile(BaseModel):
         ClusterTestSpec(**self.metadata["clusterSpec"])
 
         _validate_section(self.steps, "steps")
-        _validate_on_error(self.steps)
+        _validate_on_failure(self.steps)
         return self
