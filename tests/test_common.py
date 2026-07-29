@@ -228,6 +228,30 @@ class TestParseK8sQuantity:
     def test_ti(self):
         assert parse_k8s_quantity("1Ti") == 1024**4
 
+    def test_decimal_with_binary_suffix(self):
+        assert parse_k8s_quantity("1.5Gi") == 1.5 * 1024**3
+
+    def test_decimal_nano(self):
+        assert parse_k8s_quantity("100n") == pytest.approx(100e-9)
+
+    def test_decimal_micro(self):
+        assert parse_k8s_quantity("100u") == pytest.approx(100e-6)
+
+    def test_decimal_kilo(self):
+        assert parse_k8s_quantity("1k") == 1000.0
+
+    def test_decimal_mega(self):
+        assert parse_k8s_quantity("2M") == 2e6
+
+    def test_decimal_giga(self):
+        assert parse_k8s_quantity("1G") == 1e9
+
+    def test_decimal_tera(self):
+        assert parse_k8s_quantity("1T") == 1e12
+
+    def test_decimal_plain(self):
+        assert parse_k8s_quantity("0.5") == 0.5
+
     def test_empty_string(self):
         assert parse_k8s_quantity("") == 0.0
 

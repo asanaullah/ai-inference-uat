@@ -153,6 +153,14 @@ def _deep_merge_spec(base: dict[str, Any], override: dict[str, Any]) -> dict[str
 
 
 _K8S_BINARY_SUFFIXES = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40}
+_K8S_DECIMAL_SUFFIXES = {
+    "n": 1e-9,
+    "u": 1e-6,
+    "k": 1e3,
+    "M": 1e6,
+    "G": 1e9,
+    "T": 1e12,
+}
 
 
 def parse_k8s_quantity(value: Any) -> float:
@@ -164,6 +172,9 @@ def parse_k8s_quantity(value: Any) -> float:
             return float(s[: -len(suffix)]) * multiplier
     if s.endswith("m"):
         return float(s[:-1]) / 1000.0
+    for suffix, multiplier in _K8S_DECIMAL_SUFFIXES.items():
+        if s.endswith(suffix):
+            return float(s[:-1]) * multiplier
     return float(s)
 
 
