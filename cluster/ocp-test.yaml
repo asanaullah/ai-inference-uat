@@ -4,6 +4,9 @@ kind: ClusterTest
 metadata:
   name: ocp-uat
 spec:
+  compliance:
+    fipsEnabled: true
+
   nodes:
     - name: wrk-6
       componentValidation:

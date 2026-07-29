@@ -9,6 +9,7 @@ A declarative test harness that generates Kubernetes manifests from test definit
   - [Intermediate DAG (steps.json)](#intermediate-dag-stepsjson)
   - [Execution Flow](#execution-flow)
   - [Test Scopes](#test-scopes)
+    - [Placement (Cluster Scope)](#placement-cluster-scope)
   - [PVC Directory Hierarchy](#pvc-directory-hierarchy)
 - [Quickstart](#quickstart)
   - [Prerequisites](#prerequisites)
@@ -23,6 +24,7 @@ A declarative test harness that generates Kubernetes manifests from test definit
   - [Template Variables](#template-variables)
   - [Parameter Sweeps](#parameter-sweeps)
   - [DAG Pods with Services](#dag-pods-with-services)
+  - [Spec Override](#spec-override)
 - [Configuration](#configuration)
   - [Cluster Config](#cluster-config-clusternameyaml)
   - [Tool Config](#tool-config-configyaml)
@@ -70,7 +72,7 @@ The generator can also consume `steps.json` as input via `--steps`, skipping con
 
 ```bash
 # Normal: compute steps from config, write steps.json + manual + tekton
-python -m src --suite-dir examples/minimal --cluster cluster/ocp-test.yaml
+python -m src --test-suite examples/minimal/test_suite.yaml --test-lib examples/minimal --cluster cluster/ocp-test.yaml
 
 # From steps: load steps.json, write manual + tekton
 python -m src --steps build/steps.json
@@ -91,12 +93,13 @@ Cluster Pipeline (single flat pipeline):
   Setup:    apply-configmap → create-builder → build
   Tests:    [tests in test_suite.yaml list order]
               node-scoped: parallel task chains (one per node), chained via runAfter
-              cluster/project-scoped: single task chain (future)
+              cluster-scoped: one task chain per node set (sequential)
+              project-scoped: single task chain (no node affinity)
               each test ends with a guard task (fan-in sync point)
   Finally:  create-aggregator → aggregate → cleanup
 ```
 
-Each test produces one task chain per node (for node-scoped tests), with pods pinned via `nodeSelector`:
+Each test produces one or more task chains depending on scope: one per node (node-scoped, parallel, pinned via `nodeSelector`), one per node set (cluster-scoped, sequential, pinned via `nodeSelector`), or a single chain (project-scoped, no `nodeSelector`). All chains follow the same lifecycle:
 
 ```
 Task chain per node:
@@ -113,9 +116,9 @@ Tests are organized into three scopes based on where and how they run:
 
 - **Node** — validates individual nodes in isolation. Each node-scoped test runs independently on every target node listed in the cluster config, pinned via `nodeSelector`. All node task chains execute in parallel. Use for hardware validation, GPU diagnostics, driver checks, and single-node inference benchmarks.
 
-- **Cluster** *(future)* — validates behavior that spans multiple nodes but still requires node pinning. Cluster-scoped tests run sequentially with pods pinned to specific nodes. Use for multi-node coordination tests like distributed training, inter-node networking, or GPU-to-GPU communication across nodes.
+- **Cluster** — validates behavior that spans multiple nodes but still requires node pinning. Cluster-scoped tests use a `placement` config to filter eligible nodes, generate node sets (combinations or permutations), and pin each DAG step to a specific node within the set. Sets run sequentially — each completes fully before the next begins. Use for multi-node coordination tests like distributed training, inter-node networking, or GPU-to-GPU communication across nodes.
 
-- **Project** *(future)* — validates namespace-level resources with no node affinity. Project-scoped tests run sequentially without `nodeSelector`, letting the scheduler place pods freely. Use for namespace quota checks, RBAC validation, service mesh configuration, or any test that operates at the project level rather than targeting specific hardware.
+- **Project** — validates namespace-level resources with no node affinity. Project-scoped tests run as a single chain without `nodeSelector`, letting the scheduler place pods freely. Use for namespace quota checks, RBAC validation, service mesh configuration, or any test that operates at the project level rather than targeting specific hardware.
 
 Tests are registered in `test_suite.yaml` as an ordered list, each with a scope and failure policy:
 
@@ -139,6 +142,33 @@ The `onFailure` field controls what happens when a step within the test fails (d
 
 The optional `timeout` field overrides the default `defaultTestTimeout` from `config.yaml` for this test's ephemeral pods.
 
+#### Placement (Cluster Scope)
+
+Cluster-scoped tests accept a `placement` config that controls how pods are distributed across nodes:
+
+```yaml
+spec:
+  tests:
+    - name: network
+      scope: cluster
+      onFailure: continue
+      placement:
+        setSize: 2
+        setType: combination
+        setSelection: all
+        setCutoff: 3
+        setRequirements:
+          gpuCount: 4
+```
+
+| Field | Default | Description |
+|---|---|---|
+| `setSize` | `1` | Number of distinct nodes per set. When `> 1`, DAG step *i* is pinned to node *i* of the set |
+| `setType` | `combination` | `combination` (unordered, {A,B} = {B,A}) or `permutation` (ordered, (A,B) ≠ (B,A)) |
+| `setSelection` | `random` | `random` picks a single random set; `all` uses every generated set |
+| `setCutoff` | `1` | Limits the number of sets when `setSelection: all`. `0` means no limit |
+| `setRequirements` | `{}` | Filters eligible nodes by `componentValidation.sanity` fields. Numeric fields are minimums, string fields are exact matches |
+
 ### PVC Directory Hierarchy
 
 Every DAG step gets a unique directory on the PVC, computed transparently by the generator. Step names encode all hierarchy information (test_id, test name, node, DAG step), so directories are flat under the timestamp. Test pods write to `/workspace` and files land in the right place via `subPath` mounting.
@@ -150,7 +180,9 @@ Every DAG step gets a unique directory on the PVC, computed transparently by the
   <test_id>-<test>-<node>-<dag_step>/        (node-scoped)
     junit.xml
     ...
-  <test_id>-<test>-<dag_step>/               (cluster/project-scoped, future)
+  <test_id>-<test>-set<i>-<dag_step>/         (cluster-scoped, multiple sets)
+    junit.xml
+  <test_id>-<test>-<dag_step>/               (cluster single set / project-scoped)
     junit.xml
   report/
     summary.json
@@ -178,7 +210,8 @@ pip install -r requirements.txt
 
 ```bash
 python -m src \
-  --suite-dir examples/minimal \
+  --test-suite examples/minimal/test_suite.yaml \
+  --test-lib examples/minimal \
   --cluster cluster/ocp-test.yaml \
   --config config.yaml \
   --templates-dir templates \
@@ -191,7 +224,8 @@ Output is written to `build/manual/` and `build/tekton/`.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--suite-dir` | (required\*) | Directory containing `test_suite.yaml` (required), test definition YAMLs, and Go source files |
+| `--test-suite` | (required\*) | Path to `test_suite.yaml` |
+| `--test-lib` | (required\*) | Directory containing test definition YAMLs and Go source files |
 | `--cluster` | (required\*) | Path to the cluster config YAML |
 | `--config` | `config.yaml` | Path to the tool config |
 | `--run-id` | `manual-run` | Timestamp substitute for manual output |
@@ -326,7 +360,7 @@ The `Label("pass-fail")` must match the `labelFilter` in the test YAML. The comp
 ### 4. Generate and Run
 
 ```bash
-python -m src --suite-dir examples/minimal --cluster cluster/ocp-test.yaml
+python -m src --test-suite examples/minimal/test_suite.yaml --test-lib examples/minimal --cluster cluster/ocp-test.yaml
 ```
 
 The generated output compiles `my-test.go` into a binary on the builder pod and runs it on each target node.
@@ -427,6 +461,28 @@ dag:
 
 The generator creates a Kubernetes Service alongside the pod. Downstream steps reference it via `{{ services["vllm-server"].url }}`, which resolves to `http://svc-<test_id>-<test>-<node>-vllm-server:8000`. Service names are prefixed with `svc-` for DNS-1035 compliance.
 
+### Spec Override
+
+Each suite entry can include a `spec` section that is deep-merged over the test definition's `spec` from `<test>.yaml`. This lets the same test definition produce different runtime configurations across suite entries without duplicating the test file:
+
+```yaml
+spec:
+  tests:
+    - name: inference
+      scope: node
+      onFailure: abort
+      spec:
+        serverConfig:
+          model: ibm-granite/granite-3.3-8b-instruct
+        dag:
+          vllm-server:
+            resources:
+              limits:
+                nvidia.com/gpu: 2
+```
+
+The merge is recursive for dict fields (`serverConfig`, `requirements`) — nested keys are merged, not replaced. For `dag` overrides, steps are referenced by name as dict keys (not a list): each key is matched to a DAG step by `name`, and only the specified fields within that step are overridden. Unmentioned fields and unmentioned DAG steps retain their `<test>.yaml` defaults. After merging, the result is re-validated as a `TestSpec`.
+
 ## Configuration
 
 ### Cluster Config (`cluster/<name>.yaml`)
@@ -435,6 +491,9 @@ Defines target nodes, namespace, and storage:
 
 ```yaml
 spec:
+  compliance:
+    fipsEnabled: true
+
   nodes:
     - name: wrk-4
       componentValidation:
@@ -448,9 +507,11 @@ spec:
     basePath: uat/results
 ```
 
+The `compliance` section holds cluster-wide settings consumed by Go test binaries (e.g., the FIPS mode check in the component test). The harness passes these through via the embedded `cluster.yaml` — they are not used by the manifest generator.
+
 The `name` field is the value matched against the `nodeSelectorKey` label (default: `kubernetes.io/hostname`). It is also used in step names for human readability. For Kubernetes resource names (pods, services, Tekton tasks), the generator sanitizes the node name: invalid characters are replaced with dashes, uppercase is lowercased, and names longer than 16 characters are truncated to 12 characters with a 4-character hash suffix. Short, simple names like `wrk-4` are used as-is; FQDN hostnames like `ip-10-0-1-42.ec2.internal` are automatically shortened.
 
-All fields under `componentValidation` are available in Jinja2 templates. The `sanity.gpuCount` field is used for GPU requirement checks — tests with `requirements.gpu: true` are skipped on nodes with `gpuCount: 0`.
+All fields under `componentValidation` are available in Jinja2 templates. The `sanity.gpuCount` field is used for GPU requirement checks — tests with `requirements.gpu: true` are skipped on nodes with `gpuCount <= 0`.
 
 ### Tool Config (`config.yaml`)
 
@@ -458,7 +519,7 @@ Controls images, pod names, labels, and timeouts:
 
 ```yaml
 oseCLIImage: registry.redhat.io/openshift4/ose-cli:latest
-builderImage: golang:1.25
+builderImage: golang:1.26
 ginkgoVersion: v2.32.0
 aggregatorImage: python:3-slim
 configmapName: uat-test-source
@@ -569,7 +630,7 @@ The `--templates-dir` CLI arg loads all Jinja2 templates from a custom directory
 ```bash
 cp -r templates/ my-templates/
 # edit my-templates/dag-pod.yaml.j2 to add custom annotations
-python -m src --templates-dir my-templates/ --suite-dir examples/minimal --cluster cluster/ocp-test.yaml
+python -m src --templates-dir my-templates/ --test-suite examples/minimal/test_suite.yaml --test-lib examples/minimal --cluster cluster/ocp-test.yaml
 ```
 
 ### Custom Aggregation
@@ -579,7 +640,7 @@ The `--scripts-dir` CLI arg controls where `aggregate.py` is loaded from. Replac
 ```bash
 cp -r scripts/ my-scripts/
 # edit my-scripts/aggregate.py to push results to a dashboard
-python -m src --scripts-dir my-scripts/ --suite-dir examples/minimal --cluster cluster/ocp-test.yaml
+python -m src --scripts-dir my-scripts/ --test-suite examples/minimal/test_suite.yaml --test-lib examples/minimal --cluster cluster/ocp-test.yaml
 ```
 
 The script receives the results directory as its first argument and is expected to scan for `junit.xml` files across all step directories.
@@ -644,7 +705,8 @@ Use manual mode to generate manifests for the privileged suite, then run them st
 ```bash
 # Generate only the admin suite
 python -m src \
-  --suite-dir admin-suite \
+  --test-suite admin-suite/test_suite.yaml \
+  --test-lib admin-suite \
   --cluster cluster/ocp-test.yaml \
   --config config.yaml \
   --run-id admin-$(date +%Y%m%d-%H%M%S)
@@ -660,13 +722,16 @@ Manual mode gives the administrator control over which nodes to target and the a
 ```
 src/
   __main__.py         Entry point
-  generate.py         CLI, setup/teardown steps, manual writer, Tekton writer
+  main.py             CLI parsing, orchestration
+  step_generator.py   Setup/teardown step computation, step I/O (steps.json)
   node.py             Node-level step computation, DAG pod rendering
-  cluster.py          Cluster-level step computation (placeholder)
-  project.py          Project-level step computation (placeholder)
+  cluster.py          Cluster-level step computation, placement resolution
+  project.py          Project-level step computation (single chain, no node affinity)
   common.py           Jinja2 engine, manifest validation, config loading
   models.py           Pydantic schemas and dataclasses
-  steps_io.py         Intermediate DAG serialization and loading
+  writers/
+    manual.py         Manual writer (numbered shell scripts + YAML manifests)
+    tekton.py         Tekton writer (Tasks, Pipeline, PipelineRun)
 tests/                Unit and integration tests
 scripts/
   aggregate.py        JUnit XML aggregation (deployed via ConfigMap)
@@ -688,7 +753,7 @@ The generator delivers Go source, build scripts, cluster config, test suite conf
 
 - **Cluster config consistency.** The cluster YAML contains sensitive, environment-specific details (node names, GPU counts, namespace, storage config). With Git clones, the cluster config must either live in a public repo (security risk) or on a separate PVC (adding a `clusterConfigSource`/`clusterConfigPvc` configuration surface). The ConfigMap approach uses the same local file the generator already reads, guaranteeing the cluster config in the pod matches what the generator used to compute the DAG.
 
-- **Test suite consistency.** The generator reads test definitions locally (`--suite-dir`) to compute the step DAG — which pods to create, what commands to run, what sweep entries to generate. A setup pod would clone the test suite from a remote repo at runtime. If the local directory and the remote repo diverge (different branch, uncommitted changes, different path), the DAG won't match the compiled binaries: steps may reference tests that don't exist on the PVC, or miss tests that do. The ConfigMap eliminates this class of drift by bundling exactly the source the generator consumed.
+- **Test suite consistency.** The generator reads test definitions locally (`--test-suite` / `--test-lib`) to compute the step DAG — which pods to create, what commands to run, what sweep entries to generate. A setup pod would clone the test suite from a remote repo at runtime. If the local directory and the remote repo diverge (different branch, uncommitted changes, different path), the DAG won't match the compiled binaries: steps may reference tests that don't exist on the PVC, or miss tests that do. The ConfigMap eliminates this class of drift by bundling exactly the source the generator consumed.
 
 - **Additional infrastructure.** The setup pod approach requires a Python image, network access to clone repos, `pip install` of dependencies, and a standalone `builder.py` script that duplicates test-suite parsing logic already in the generator. The ConfigMap approach has no runtime dependencies beyond `oc` and the Go toolchain.
 

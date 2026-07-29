@@ -1,15 +1,17 @@
 import pytest
 
 from src.common import create_jinja_env
-from src.generate import (
-    _build_generate_lookup,
-    _derive_manual_script,
-    _find_step,
-    _render_tekton_task,
-    _resolve_manifest,
+from src.step_generator import (
     _validate_unique_pod_names,
     compute_setup_steps,
     compute_teardown_steps,
+)
+from src.writers.manual import _derive_manual_script
+from src.writers.tekton import (
+    _build_generate_lookup,
+    _find_step,
+    _render_tekton_task,
+    _resolve_manifest,
 )
 from src.models import ClusterTestSpec, LoadedTest, Step, TestSpec, ToolConfig
 
@@ -224,7 +226,7 @@ class TestComputeSteps:
             cs,
             env,
             "cluster/ocp-test.yaml",
-            "examples/minimal",
+            "examples/minimal/test_suite.yaml",
             "# agg",
         )
         names = [s.name for s in steps]
@@ -243,7 +245,7 @@ class TestComputeSteps:
             cs,
             env,
             "cluster/ocp-test.yaml",
-            "examples/minimal",
+            "examples/minimal/test_suite.yaml",
             "# agg",
         )
         cm = next(

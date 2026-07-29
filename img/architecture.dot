@@ -72,7 +72,7 @@ digraph architecture {
                BGCOLOR="#e4f3e9" COLOR="#2e944a" STYLE="ROUNDED">
             <TR><TD COLSPAN="7" BGCOLOR="#2e944a" CELLPADDING="12">
                 <FONT COLOR="white" POINT-SIZE="13"><B>python -m src</B></FONT>
-                <FONT COLOR="#b8dfc5" POINT-SIZE="10">  common.py → node.py / cluster.py / project.py → generate.py → steps_io.py</FONT>
+                <FONT COLOR="#b8dfc5" POINT-SIZE="10">  main.py → step_generator.py → node.py / cluster.py / project.py → writers/</FONT>
             </TD></TR>
             <TR>
                 <TD BGCOLOR="#c2e4cd">Load &amp;<BR/>Validate<BR/><FONT POINT-SIZE="9" COLOR="#555">Pydantic</FONT></TD>
@@ -172,8 +172,8 @@ digraph architecture {
                         </TD>
                         <TD BGCOLOR="#dde4f0" VALIGN="TOP">
                             <FONT POINT-SIZE="11"><B>scope: cluster</B></FONT><BR/>
-                            <FONT POINT-SIZE="10" COLOR="#555">orchestrate tasks<BR/>across nodes directly</FONT><BR/><BR/>
-                            <FONT FACE="Courier" POINT-SIZE="9">node A (server)<BR/>→ node B (client)<BR/>→ collect results</FONT>
+                            <FONT POINT-SIZE="10" COLOR="#555">placement-resolved<BR/>node sets (sequential)</FONT><BR/><BR/>
+                            <FONT FACE="Courier" POINT-SIZE="9">node A (server)<BR/>→ node B (client)<BR/>→ teardown → next set</FONT>
                         </TD>
                         <TD BGCOLOR="#dde4f0" VALIGN="TOP">
                             <FONT POINT-SIZE="11"><B>scope: project</B></FONT><BR/>

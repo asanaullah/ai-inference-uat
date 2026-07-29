@@ -37,6 +37,19 @@ class ToolConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class Placement(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    set_type: Literal["permutation", "combination"] = Field(
+        "combination", alias="setType"
+    )
+    set_size: int = Field(1, alias="setSize")
+    set_selection: Literal["all", "random"] = Field("random", alias="setSelection")
+    set_requirements: dict[str, Any] = Field(
+        default_factory=dict, alias="setRequirements"
+    )
+    set_cutoff: int = Field(1, alias="setCutoff")
+
+
 class TestEntry(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     name: str
@@ -45,6 +58,8 @@ class TestEntry(BaseModel):
         "continue", alias="onFailure"
     )
     timeout: Optional[str] = None
+    placement: Optional[Placement] = None
+    spec: Optional[dict[str, Any]] = None
 
 
 class TestSuiteSpec(BaseModel):
@@ -83,10 +98,16 @@ class StorageConfig(BaseModel):
     base_path: str = Field(alias="basePath")
 
 
+class ComplianceConfig(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    fips_enabled: bool = Field(False, alias="fipsEnabled")
+
+
 class ClusterTestSpec(BaseModel):
     nodes: list[NodeSpec]
     namespace: str
     storage: StorageConfig
+    compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
 
 
 class ClusterTest(BaseModel):
@@ -143,6 +164,16 @@ class DAGStep(BaseModel):
     label_filter: Optional[str] = Field(None, alias="labelFilter")
     privileged: bool = False
 
+    @model_validator(mode="after")
+    def _check_persist_sweep_exclusive(self) -> "DAGStep":
+        if self.persists_through_sweep and self.parameter_sweep is not None:
+            raise ValueError(
+                f"DAG step '{self.name}' has both persistsThroughSweep and "
+                f"parameterSweep set — parameterSweep is only valid on "
+                f"non-persistent steps"
+            )
+        return self
+
 
 class TestSource(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -175,6 +206,7 @@ class LoadedTest:
     timeout: Optional[str] = None
     test_id: str = ""
     scope: str = "node"
+    placement: Optional[Placement] = None
 
 
 @dataclass
@@ -190,6 +222,7 @@ class Step:
     test_id: str = ""
     on_failure: str = ""
     finally_step: bool = False
+    lifecycle: bool = False
     scope: str = ""
     phase: str = ""
 

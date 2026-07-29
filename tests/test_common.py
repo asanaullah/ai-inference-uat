@@ -1,12 +1,16 @@
 import pytest
 
 from src.common import (
+    _deep_merge_spec,
     build_command,
     create_jinja_env,
+    parse_k8s_quantity,
     sanitize_node_name,
     validate_manifest,
+    validate_node_resources,
     _yaml_quote,
 )
+from src.models import LoadedTest, NodeSpec, TestSpec
 
 
 # -- validate_manifest --------------------------------------------------------
@@ -158,3 +162,150 @@ class TestJinjaFilters:
     def test_shell_join(self, env):
         t = env.from_string("{{ args | shell_join }}")
         assert t.render(args=["echo", "hello world"]) == "echo 'hello world'"
+
+
+# -- _deep_merge_spec ---------------------------------------------------------
+
+
+class TestDeepMergeSpec:
+    def test_simple_override(self):
+        base = {"serverConfig": {"model": "a"}, "source": {"ginkgo": "t.go"}}
+        override = {"serverConfig": {"model": "b"}}
+        result = _deep_merge_spec(base, override)
+        assert result["serverConfig"]["model"] == "b"
+        assert result["source"] == {"ginkgo": "t.go"}
+
+    def test_dag_by_name(self):
+        base = {
+            "dag": [
+                {"name": "server", "image": "old"},
+                {"name": "client", "image": "img"},
+            ]
+        }
+        override = {"dag": {"server": {"image": "new"}}}
+        result = _deep_merge_spec(base, override)
+        assert len(result["dag"]) == 2
+        server = [d for d in result["dag"] if d["name"] == "server"][0]
+        assert server["image"] == "new"
+        client = [d for d in result["dag"] if d["name"] == "client"][0]
+        assert client["image"] == "img"
+
+    def test_nested_merge(self):
+        base = {"a": {"b": {"c": 1, "d": 2}}}
+        override = {"a": {"b": {"c": 3}}}
+        result = _deep_merge_spec(base, override)
+        assert result["a"]["b"]["c"] == 3
+        assert result["a"]["b"]["d"] == 2
+
+    def test_non_dict_replacement(self):
+        base = {"x": [1, 2, 3]}
+        override = {"x": [4, 5]}
+        result = _deep_merge_spec(base, override)
+        assert result["x"] == [4, 5]
+
+
+# -- parse_k8s_quantity -------------------------------------------------------
+
+
+class TestParseK8sQuantity:
+    def test_plain_integer(self):
+        assert parse_k8s_quantity(4) == 4.0
+
+    def test_plain_string(self):
+        assert parse_k8s_quantity("4") == 4.0
+
+    def test_millicores(self):
+        assert parse_k8s_quantity("500m") == 0.5
+
+    def test_ki(self):
+        assert parse_k8s_quantity("1Ki") == 1024.0
+
+    def test_mi(self):
+        assert parse_k8s_quantity("1Mi") == 1024 * 1024
+
+    def test_gi(self):
+        assert parse_k8s_quantity("2Gi") == 2 * 1024**3
+
+    def test_ti(self):
+        assert parse_k8s_quantity("1Ti") == 1024**4
+
+    def test_empty_string(self):
+        assert parse_k8s_quantity("") == 0.0
+
+
+# -- validate_node_resources --------------------------------------------------
+
+
+class TestValidateNodeResources:
+    @pytest.fixture()
+    def env(self):
+        return create_jinja_env("templates")
+
+    def _node(self, **extra_sanity):
+        sanity = {"gpuCount": 4, **extra_sanity}
+        return NodeSpec(
+            name="wrk-1",
+            componentValidation={"sanity": sanity},
+        )
+
+    def _test(self, dag):
+        spec = TestSpec(source={"ginkgo": "t.go"}, dag=dag)
+        return LoadedTest(name="t", spec=spec, go_source="x", test_id="1")
+
+    def test_passes_when_within_capacity(self, env):
+        dag = [
+            {
+                "name": "run",
+                "image": "img",
+                "resources": {"requests": {"nvidia.com/gpu": "2"}},
+                "labelFilter": "pass-fail",
+            }
+        ]
+        validate_node_resources(
+            self._test(dag), self._node(**{"nvidia.com/gpu": 4}), env
+        )
+
+    def test_fails_when_exceeds_capacity(self, env):
+        dag = [
+            {
+                "name": "run",
+                "image": "img",
+                "resources": {"requests": {"nvidia.com/gpu": "6"}},
+                "labelFilter": "pass-fail",
+            }
+        ]
+        with pytest.raises(ValueError, match="exceeds capacity"):
+            validate_node_resources(
+                self._test(dag), self._node(**{"nvidia.com/gpu": 4}), env
+            )
+
+    def test_skips_unknown_resource(self, env):
+        dag = [
+            {
+                "name": "run",
+                "image": "img",
+                "resources": {"requests": {"custom/resource": "100"}},
+                "labelFilter": "pass-fail",
+            }
+        ]
+        validate_node_resources(self._test(dag), self._node(), env)
+
+    def test_peak_demand_persistent_plus_ephemeral(self, env):
+        dag = [
+            {
+                "name": "server",
+                "image": "img",
+                "persistsThroughSweep": True,
+                "resources": {"requests": {"nvidia.com/gpu": "2"}},
+            },
+            {
+                "name": "client",
+                "image": "img",
+                "resources": {"requests": {"nvidia.com/gpu": "3"}},
+                "labelFilter": "pass-fail",
+            },
+        ]
+        with pytest.raises(ValueError, match="exceeds capacity"):
+            validate_node_resources(
+                self._test(dag), self._node(**{"nvidia.com/gpu": 4}), env
+            )

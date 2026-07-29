@@ -1,0 +1,44 @@
+# Assisted by Claude Opus 4.6
+apiVersion: uat.openshift.io/v1
+kind: Test
+metadata:
+  name: iperf3
+  version: v0.0.1
+  description: iperf3 TCP bandwidth measurement between two nodes
+spec:
+  source:
+    ginkgo: iperf3.go
+
+  dag:
+    # Step 1: iperf3 server (stays up for the client to connect to)
+    # With setSize: 2, this step runs on node 0 of the set
+    - name: iperf-server
+      image: networkstatic/iperf3:latest
+      command:
+        args:
+          - iperf3
+          - -s
+      service:
+        enabled: true
+        port: 5201
+        name: iperf-server
+        headless: true
+      ports:
+        - containerPort: 5201
+          name: iperf
+      readinessProbe:
+        tcpSocket:
+          port: 5201
+        initialDelaySeconds: 5
+        periodSeconds: 5
+        failureThreshold: 6
+      persistsThroughSweep: true
+
+    # Step 2: Ginkgo test client — pings server then measures bandwidth
+    # With setSize: 2, this step runs on node 1 of the set
+    - name: iperf-client
+      image: networkstatic/iperf3:latest
+      labelFilter: pass-fail
+      env:
+        - name: SERVER_HOST
+          value: '{{ services["iperf-server"].name }}'

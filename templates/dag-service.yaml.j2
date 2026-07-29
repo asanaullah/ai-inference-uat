@@ -11,6 +11,9 @@ metadata:
 {% if node %}
     node: {{ node }}
 {% endif %}
+{% if chain is defined and chain %}
+    chain: {{ chain }}
+{% endif %}
 {% if sweep_id is defined %}
     sweep: {{ sweep_id }}
 {% endif %}

@@ -1,0 +1,49 @@
+# Assisted by Claude Opus 4.6
+apiVersion: uat.openshift.io/v1
+kind: Test
+metadata:
+  name: platform-check
+  version: v0.0.1
+  description: Validate platform configuration, RBAC permissions, and required API groups
+spec:
+  source:
+    ginkgo: platform-check.go
+
+  serverConfig:
+    checks:
+      - type: permission
+        verb: get
+        resource: pods
+        expected: "no"
+      - type: permission
+        verb: create
+        resource: pods
+        expected: "no"
+      - type: permission
+        verb: get
+        resource: secrets
+        expected: "no"
+      - type: permission
+        verb: get
+        resource: nodes
+        expected: "no"
+      - type: apiGroup
+        group: kubeflow.org
+        expected: "yes"
+      - type: apiGroup
+        group: serving.kserve.io
+        expected: "yes"
+      - type: apiGroup
+        group: ray.io
+        expected: "yes"
+      - type: apiGroup
+        group: nonexistent.example.io
+        expected: "no"
+
+  dag:
+    - name: checker
+      image: registry.redhat.io/ubi9/ubi:latest
+      labelFilter: pass-fail
+      env:
+        - name: PERMISSION_CHECKS
+          value: '{{ serverConfig.checks | toJson }}'

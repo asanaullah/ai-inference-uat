@@ -25,7 +25,12 @@ type ClusterConfig struct {
 }
 
 type ClusterConfigSpec struct {
-	Nodes []NodeSpec `yaml:"nodes"`
+	Compliance ComplianceSpec `yaml:"compliance"`
+	Nodes      []NodeSpec     `yaml:"nodes"`
+}
+
+type ComplianceSpec struct {
+	FipsEnabled bool `yaml:"fipsEnabled"`
 }
 
 type SanitySpec struct {
@@ -67,6 +72,7 @@ type NodeSpec struct {
 var (
 	sanity     SanitySpec
 	ideal      IdealSpec
+	compliance ComplianceSpec
 	componentResultsDir string
 )
 
@@ -96,6 +102,8 @@ var _ = BeforeSuite(func() {
 		}
 	}
 	Expect(found).To(BeTrue(), "Node %s not found in cluster config", nodeName)
+
+	compliance = cluster.Spec.Compliance
 
 	GinkgoWriter.Printf("Node: %s\n", nodeName)
 	GinkgoWriter.Printf("Expected GPU: %dx %s\n", sanity.GpuCount, sanity.GpuModel)
@@ -159,14 +167,20 @@ var _ = Describe("Sanity Checks", Label("pass-fail"), func() {
 			}
 		}
 		GinkgoWriter.Printf("GPU count: %d (expected: %d)\n", count, sanity.GpuCount)
-		Expect(count).To(Equal(sanity.GpuCount))
+		Expect(count).To(Equal(sanity.GpuCount),
+			"GPU count mismatch: nvidia-smi reports %d GPU(s) but the cluster config expects %d. "+
+				"This means the node is either missing GPUs (hardware fault, driver issue) or the "+
+				"cluster config has the wrong gpuCount for this node.", count, sanity.GpuCount)
 	})
 
 	It("should detect correct GPU model", func() {
 		gpuName := nvidiaSmiQuery("name")
 		actual := strings.ReplaceAll(gpuName, " ", "-")
 		GinkgoWriter.Printf("GPU model: %s (expected: %s)\n", actual, sanity.GpuModel)
-		Expect(actual).To(Equal(sanity.GpuModel))
+		Expect(actual).To(Equal(sanity.GpuModel),
+			"GPU model mismatch: nvidia-smi reports '%s' but the cluster config expects '%s'. "+
+				"This node may have been assigned the wrong spec in cluster.yaml, or GPUs were "+
+				"physically swapped without updating the config.", actual, sanity.GpuModel)
 	})
 
 	It("should have correct NVLink width", func() {
@@ -183,10 +197,14 @@ var _ = Describe("Sanity Checks", Label("pass-fail"), func() {
 				widths = append(widths, match)
 			}
 		}
-		Expect(widths).NotTo(BeEmpty(), "No NVLink connections found in topology")
+		Expect(widths).NotTo(BeEmpty(), "No NVLink connections found in nvidia-smi topo output. "+
+			"The GPUs may not be NVLink-capable, or the topology query format has changed.")
 		for _, w := range widths {
 			GinkgoWriter.Printf("NVLink connection: %s (expected: %s)\n", w, sanity.Nvlink)
-			Expect(w).To(Equal(sanity.Nvlink))
+			Expect(w).To(Equal(sanity.Nvlink),
+				"NVLink width mismatch: detected '%s' but expected '%s'. "+
+					"A lower NVLink width (e.g. NV4 vs NV12) degrades GPU-to-GPU bandwidth "+
+					"and will bottleneck distributed training workloads.", w, sanity.Nvlink)
 		}
 	})
 
@@ -229,26 +247,39 @@ var _ = Describe("Sanity Checks", Label("pass-fail"), func() {
 			GinkgoWriter.Printf("GPU line %d: %d/%d connections are NVLink\n",
 				gpuLines, nvConnections, sanity.GpuCount-1)
 			Expect(nvConnections).To(Equal(sanity.GpuCount-1),
-				"Not all GPU-to-GPU connections use NVLink (expected all-to-all)")
+				"NVLink topology mismatch on GPU line %d: only %d of %d GPU-to-GPU connections "+
+					"use NVLink. For all-to-all topology, every GPU must have a direct NVLink path "+
+					"to every other GPU. Missing links force traffic through PCIe/SYS, which is "+
+					"orders of magnitude slower for NCCL collectives.", gpuLines, nvConnections, sanity.GpuCount-1)
 		}
-		Expect(gpuLines).To(Equal(sanity.GpuCount))
+		Expect(gpuLines).To(Equal(sanity.GpuCount),
+			"GPU topology row count mismatch: nvidia-smi topo shows %d GPU rows but expected %d. "+
+				"Some GPUs may not be visible to the driver.", gpuLines, sanity.GpuCount)
 	})
 
 	It("should report correct PCIe link width", func() {
-		for _, w := range nvidiaSmiQueryAll("pcie.link.width.current") {
+		for i, w := range nvidiaSmiQueryAll("pcie.link.width.current") {
 			GinkgoWriter.Printf("PCIe width: %s (expected: %d)\n", w, sanity.PcieWidth)
 			actual, err := strconv.Atoi(w)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(actual).To(Equal(sanity.PcieWidth))
+			Expect(actual).To(Equal(sanity.PcieWidth),
+				"PCIe link width mismatch on GPU %d: running at x%d but expected x%d. "+
+					"A narrower link (e.g. x8 vs x16) halves the host-to-GPU bandwidth. "+
+					"Common causes: GPU not fully seated in the slot, or a PCIe riser/cable issue.",
+				i, actual, sanity.PcieWidth)
 		}
 	})
 
 	It("should report correct PCIe generation", func() {
-		for _, g := range nvidiaSmiQueryAll("pcie.link.gen.current") {
+		for i, g := range nvidiaSmiQueryAll("pcie.link.gen.current") {
 			GinkgoWriter.Printf("PCIe gen: %s (expected: %d)\n", g, sanity.PcieGen)
 			actual, err := strconv.Atoi(g)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(actual).To(Equal(sanity.PcieGen))
+			Expect(actual).To(Equal(sanity.PcieGen),
+				"PCIe generation mismatch on GPU %d: running at Gen%d but expected Gen%d. "+
+					"A lower generation (e.g. Gen4 vs Gen5) reduces per-lane throughput. "+
+					"Check that the slot supports the expected generation and that no BIOS "+
+					"setting is capping it.", i, actual, sanity.PcieGen)
 		}
 	})
 
@@ -266,7 +297,10 @@ var _ = Describe("Sanity Checks", Label("pass-fail"), func() {
 		}
 		Expect(actual).NotTo(BeEmpty(), "model name not found in /proc/cpuinfo")
 		GinkgoWriter.Printf("CPU model: %s (expected: %s)\n", actual, sanity.CpuModel)
-		Expect(actual).To(Equal(sanity.CpuModel))
+		Expect(actual).To(Equal(sanity.CpuModel),
+			"CPU model mismatch: /proc/cpuinfo reports '%s' but the cluster config expects '%s'. "+
+				"This node may have been assigned the wrong spec in cluster.yaml, or the pod "+
+				"scheduled on the wrong node.", actual, sanity.CpuModel)
 	})
 
 	It("should report correct CPU count", func() {
@@ -280,7 +314,11 @@ var _ = Describe("Sanity Checks", Label("pass-fail"), func() {
 			}
 		}
 		GinkgoWriter.Printf("CPU count: %d (expected: %d)\n", count, sanity.CpuCount)
-		Expect(count).To(Equal(sanity.CpuCount))
+		Expect(count).To(Equal(sanity.CpuCount),
+			"CPU count mismatch: /proc/cpuinfo shows %d logical CPUs but the cluster config "+
+				"expects %d. If lower, check whether CPU cores are offline or the container's "+
+				"cpuset is restricted. If higher, the cluster config may be outdated.",
+			count, sanity.CpuCount)
 	})
 
 	It("should report memory capacity within expected range", func() {
@@ -293,7 +331,10 @@ var _ = Describe("Sanity Checks", Label("pass-fail"), func() {
 		memTotalGi := float64(memTotalKB) / (1024 * 1024)
 		expectedGi := parseGi(sanity.Memory)
 		GinkgoWriter.Printf("Memory: %.1f Gi (expected: %.1f Gi)\n", memTotalGi, expectedGi)
-		Expect(memTotalGi).To(BeNumerically("~", expectedGi, expectedGi*0.05))
+		Expect(memTotalGi).To(BeNumerically("~", expectedGi, expectedGi*0.05),
+			"Memory capacity mismatch: /proc/meminfo reports %.1f Gi but the cluster config "+
+				"expects %.1f Gi (tolerance: 5%%). A significant shortfall may indicate failed "+
+				"DIMMs or a BIOS memory configuration issue.", memTotalGi, expectedGi)
 	})
 
 	It("should detect correct NUMA node count", func() {
@@ -302,7 +343,10 @@ var _ = Describe("Sanity Checks", Label("pass-fail"), func() {
 
 		count := len(entries)
 		GinkgoWriter.Printf("NUMA nodes: %d (expected: %d)\n", count, sanity.NumaNodes)
-		Expect(count).To(Equal(sanity.NumaNodes))
+		Expect(count).To(Equal(sanity.NumaNodes),
+			"NUMA node count mismatch: found %d NUMA nodes but expected %d. "+
+				"Wrong NUMA topology affects memory locality for GPU workloads "+
+				"and can cause cross-socket memory access penalties.", count, sanity.NumaNodes)
 	})
 })
 
@@ -315,7 +359,11 @@ var _ = Describe("Ideal Configuration", Label("pass-fail"), func() {
 	It("should report correct CUDA driver version", func() {
 		actual := nvidiaSmiQuery("driver_version")
 		GinkgoWriter.Printf("CUDA driver: %s (expected: %s)\n", actual, ideal.CudaDriverVersion)
-		Expect(actual).To(Equal(ideal.CudaDriverVersion))
+		Expect(actual).To(Equal(ideal.CudaDriverVersion),
+			"CUDA driver version mismatch: node has '%s' but expected '%s'. "+
+				"Mismatched driver versions across nodes can cause silent failures "+
+				"in distributed training. Check whether the GPU operator deployed "+
+				"the expected driver daemonset.", actual, ideal.CudaDriverVersion)
 	})
 
 	It("should have GPU power limit at expected value", func() {
@@ -324,7 +372,11 @@ var _ = Describe("Ideal Configuration", Label("pass-fail"), func() {
 			Expect(err).NotTo(HaveOccurred(), "failed to parse power.limit: %s", raw)
 			actual := int(watts)
 			GinkgoWriter.Printf("GPU power limit: %d W (expected: %d W)\n", actual, ideal.GpuPowerLimit)
-			Expect(actual).To(Equal(ideal.GpuPowerLimit))
+			Expect(actual).To(Equal(ideal.GpuPowerLimit),
+				"GPU power limit mismatch: set to %d W but expected %d W. "+
+					"A lower power limit throttles GPU clock speeds and reduces training "+
+					"throughput. Check nvidia-smi or the GPU operator's power management config.",
+				actual, ideal.GpuPowerLimit)
 		}
 	})
 
@@ -335,7 +387,11 @@ var _ = Describe("Ideal Configuration", Label("pass-fail"), func() {
 			expected = "Enabled"
 		}
 		GinkgoWriter.Printf("GPU persistence mode: %s (expected: %s)\n", actual, expected)
-		Expect(actual).To(Equal(expected))
+		Expect(actual).To(Equal(expected),
+			"GPU persistence mode is '%s' but expected '%s'. "+
+				"When persistence mode is disabled, the GPU driver unloads between jobs, "+
+				"adding several seconds of cold-start latency to every GPU workload.",
+			actual, expected)
 	})
 
 	It("should match expected kernel version", func() {
@@ -344,7 +400,11 @@ var _ = Describe("Ideal Configuration", Label("pass-fail"), func() {
 
 		actual := strings.TrimSpace(string(output))
 		GinkgoWriter.Printf("Kernel: %s (expected: %s)\n", actual, ideal.Kernel)
-		Expect(actual).To(Equal(ideal.Kernel))
+		Expect(actual).To(Equal(ideal.Kernel),
+			"Kernel version mismatch: running '%s' but expected '%s'. "+
+				"A different kernel version may lack required drivers, security patches, "+
+				"or feature support (e.g. IPsec full offload requires kernel 6.12+). "+
+				"Check that MachineConfig is applying the correct OS image.", actual, ideal.Kernel)
 	})
 
 	It("should have hugepages configured correctly", func() {
@@ -355,19 +415,33 @@ var _ = Describe("Ideal Configuration", Label("pass-fail"), func() {
 		expectedMi := parseMi(ideal.Hugepages)
 		expectedPages := expectedMi / 2
 		GinkgoWriter.Printf("Hugepages 2Mi: %d pages (expected: %d)\n", actualPages, expectedPages)
-		Expect(actualPages).To(Equal(expectedPages))
+		Expect(actualPages).To(Equal(expectedPages),
+			"Hugepages mismatch: %d 2Mi pages allocated but expected %d (= %s). "+
+				"Insufficient hugepages starve DPDK and RDMA-based workloads. "+
+				"Check the node's kernel boot parameters or the Tuned/PerformanceProfile config.",
+			actualPages, expectedPages, ideal.Hugepages)
 	})
 
 	It("should have CPU frequency governor set to expected value", func() {
 		actual := readSysfs("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
 		GinkgoWriter.Printf("CPU freq governor: %s (expected: %s)\n", actual, ideal.CpuFreqGovernor)
-		Expect(actual).To(Equal(ideal.CpuFreqGovernor))
+		Expect(actual).To(Equal(ideal.CpuFreqGovernor),
+			"CPU frequency governor mismatch: running '%s' but expected '%s'. "+
+				"'powersave' or 'ondemand' governors throttle CPU frequency under load, "+
+				"adding latency to data preprocessing and CPU-bound inference steps. "+
+				"'performance' governor keeps all cores at max frequency.",
+			actual, ideal.CpuFreqGovernor)
 	})
 
 	It("should have correct CPU idle driver", func() {
 		actual := readSysfs("/sys/devices/system/cpu/cpuidle/current_driver")
 		GinkgoWriter.Printf("CPU idle driver: %s (expected: %s)\n", actual, ideal.CpuIdleDriver)
-		Expect(actual).To(Equal(ideal.CpuIdleDriver))
+		Expect(actual).To(Equal(ideal.CpuIdleDriver),
+			"CPU idle driver mismatch: running '%s' but expected '%s'. "+
+				"The idle driver controls which C-states are available. Using the wrong "+
+				"driver (e.g. intel_idle vs acpi_idle) can enable deep sleep states that "+
+				"add microseconds of wake-up latency to interrupt handling.",
+			actual, ideal.CpuIdleDriver)
 	})
 
 	It("should have correct CPU idle governor", func() {
@@ -376,7 +450,12 @@ var _ = Describe("Ideal Configuration", Label("pass-fail"), func() {
 			"/sys/devices/system/cpu/cpuidle/current_governor",
 		)
 		GinkgoWriter.Printf("CPU idle governor: %s (expected: %s)\n", actual, ideal.CpuIdleGovernor)
-		Expect(actual).To(Equal(ideal.CpuIdleGovernor))
+		Expect(actual).To(Equal(ideal.CpuIdleGovernor),
+			"CPU idle governor mismatch: running '%s' but expected '%s'. "+
+				"The idle governor decides when to enter deeper C-states. "+
+				"For latency-sensitive GPU workloads, 'menu' is standard; "+
+				"'ladder' may cause excessive deep-sleep transitions.",
+			actual, ideal.CpuIdleGovernor)
 	})
 
 	It("should have only expected C-states enabled", func() {
@@ -394,7 +473,12 @@ var _ = Describe("Ideal Configuration", Label("pass-fail"), func() {
 		}
 
 		GinkgoWriter.Printf("Enabled C-states: %v (expected: %v)\n", enabled, ideal.CpuCStatesEnabled)
-		Expect(enabled).To(Equal(ideal.CpuCStatesEnabled))
+		Expect(enabled).To(Equal(ideal.CpuCStatesEnabled),
+			"C-state mismatch: enabled states are %v but expected %v. "+
+				"Deep C-states (C3+) save power but add wake-up latency that impacts "+
+				"interrupt-driven workloads like RDMA and GPU data transfers. "+
+				"For AI nodes, typically only POLL and C1 should be enabled.",
+			enabled, ideal.CpuCStatesEnabled)
 	})
 
 	It("should have transparent hugepages set correctly", func() {
@@ -406,7 +490,34 @@ var _ = Describe("Ideal Configuration", Label("pass-fail"), func() {
 
 		actual := match[1]
 		GinkgoWriter.Printf("Transparent hugepages: %s (expected: %s)\n", actual, ideal.TransparentHugepages)
-		Expect(actual).To(Equal(ideal.TransparentHugepages))
+		Expect(actual).To(Equal(ideal.TransparentHugepages),
+			"Transparent hugepages (THP) mismatch: set to '%s' but expected '%s'. "+
+				"THP set to 'always' can cause unpredictable latency spikes from "+
+				"background compaction (khugepaged). 'madvise' lets applications "+
+				"opt in explicitly; 'never' disables THP entirely.",
+			actual, ideal.TransparentHugepages)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// Compliance checks
+// ---------------------------------------------------------------------------
+
+var _ = Describe("Compliance Checks", Label("pass-fail"), func() {
+
+	It("should have FIPS mode enabled", func() {
+		if !compliance.FipsEnabled {
+			Skip("FIPS mode not required by cluster config")
+		}
+
+		actual := readSysfs("/proc/sys/crypto/fips_enabled")
+		GinkgoWriter.Printf("FIPS mode: %s (expected: 1)\n", actual)
+		Expect(actual).To(Equal("1"),
+			"FIPS mode is not enabled on this node (/proc/sys/crypto/fips_enabled = '%s'). "+
+				"NIST 800-171 requires FIPS-validated cryptographic modules (requirement 3.13.11). "+
+				"FIPS mode must be enabled at OpenShift install time via the install-config.yaml "+
+				"'fips: true' setting — it cannot be turned on after installation without a "+
+				"full cluster reinstall.", actual)
 	})
 })
 
