@@ -28,6 +28,9 @@ spec:
 {% if node %}
     node: {{ node }}
 {% endif %}
+{% if sweep_id is defined %}
+    sweep: {{ sweep_id }}
+{% endif %}
   ports:
     - port: {{ port }}
       targetPort: {{ port }}

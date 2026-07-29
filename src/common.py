@@ -555,7 +555,8 @@ def add_ephemeral_steps(
 ) -> None:
     has_sweep = dag_step.parameter_sweep is not None
 
-    svc_name = _register_service(dag_step, res_prefix, services)
+    if not has_sweep:
+        svc_name = _register_service(dag_step, res_prefix, services)
 
     if has_sweep:
         entries = [
@@ -575,6 +576,8 @@ def add_ephemeral_steps(
             res_name = f"{res_prefix}-{dag_step.name}-{sweep_id}"
             cleanup_name = f"{step_prefix}-cleanup-{dag_step.name}-{sweep_id}"
             cleanup_res = f"{res_prefix}-cleanup-{dag_step.name}-{sweep_id}"
+            sweep_res_prefix = f"{res_prefix}-{sweep_id}"
+            svc_name = _register_service(dag_step, sweep_res_prefix, services)
         else:
             step_name = f"{step_prefix}-{dag_step.name}"
             res_name = f"{res_prefix}-{dag_step.name}"

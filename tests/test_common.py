@@ -2,7 +2,10 @@ import pytest
 
 from src.common import (
     _deep_merge_spec,
+    _register_service,
     _yaml_quote,
+    add_ephemeral_steps,
+    add_persistent_steps,
     build_command,
     create_jinja_env,
     parse_k8s_quantity,
@@ -10,7 +13,15 @@ from src.common import (
     validate_manifest,
     validate_node_resources,
 )
-from src.models import LoadedTest, NodeSpec, TestSpec
+from src.models import (
+    CommandConfig,
+    DAGStep,
+    LoadedTest,
+    NodeSpec,
+    ServiceConfig,
+    TestSpec,
+    ToolConfig,
+)
 
 # -- validate_manifest --------------------------------------------------------
 
@@ -254,6 +265,238 @@ class TestParseK8sQuantity:
 
     def test_empty_string(self):
         assert parse_k8s_quantity("") == 0.0
+
+
+# -- _register_service --------------------------------------------------------
+
+
+class TestRegisterService:
+    def _make_dag_step(self, svc_name="server", port=8080):
+        return DAGStep(
+            name="runner",
+            image="test:latest",
+            service=ServiceConfig(enabled=True, name=svc_name, port=port),
+        )
+
+    def test_disabled_service_returns_empty(self):
+        step = DAGStep(name="runner", image="test:latest")
+        services: dict = {}
+        assert _register_service(step, "pfx", services) == ""
+        assert services == {}
+
+    def test_service_name_includes_prefix(self):
+        step = self._make_dag_step()
+        services: dict = {}
+        name = _register_service(step, "1-mytest-wrk-0", services)
+        assert name == "svc-1-mytest-wrk-0-server"
+        assert services["server"]["name"] == name
+        assert services["server"]["url"] == f"http://{name}:8080"
+
+    def test_sweep_entries_get_unique_service_names(self):
+        step = self._make_dag_step()
+        services: dict = {}
+        name_a = _register_service(step, "1-mytest-wrk-0-sweep-a", services)
+        name_b = _register_service(step, "1-mytest-wrk-0-sweep-b", services)
+        assert name_a != name_b
+        assert "sweep-a" in name_a
+        assert "sweep-b" in name_b
+
+
+# -- add_persistent_steps / add_ephemeral_steps --------------------------------
+
+TC_DATA = {
+    "oseCLIImage": "ose:latest",
+    "builderImage": "golang:1.25",
+    "aggregatorImage": "python:3-slim",
+    "configmapName": "cm",
+    "builderPodName": "builder",
+    "aggregatorPodName": "agg",
+    "nodeSelectorKey": "kubernetes.io/hostname",
+    "managedByLabel": "uat",
+}
+
+
+def _loaded_test(name="mytest", test_id="1", timeout=None):
+    spec = TestSpec(
+        source={"ginkgo": "t.go"},
+        dag=[{"name": "run", "image": "img", "labelFilter": "pass-fail"}],
+    )
+    return LoadedTest(
+        name=name,
+        spec=spec,
+        go_source="x",
+        on_failure="continue",
+        timeout=timeout,
+        test_id=test_id,
+    )
+
+
+class TestAddPersistentSteps:
+    @pytest.fixture()
+    def env(self):
+        return create_jinja_env("templates")
+
+    @pytest.fixture()
+    def tc(self):
+        return ToolConfig(**TC_DATA)
+
+    def test_generates_two_steps(self, env, tc):
+        dag_step = DAGStep(name="server", image="img:latest")
+        steps = []
+        add_persistent_steps(
+            steps,
+            dag_step,
+            "s-1-t-wrk-0",
+            "1-t-wrk-0",
+            "wrk-0",
+            "wrk-0",
+            _loaded_test(),
+            tc,
+            "ns",
+            "pvc",
+            "results",
+            {},
+            env,
+            "node",
+        )
+        assert len(steps) == 2
+        assert steps[0].type == "generate"
+        assert steps[1].type == "command"
+        assert steps[1].config["probe"] == "wait-ready"
+
+    def test_service_name_in_config(self, env, tc):
+        dag_step = DAGStep(
+            name="server",
+            image="img:latest",
+            service=ServiceConfig(enabled=True, name="server", port=8080),
+        )
+        steps = []
+        add_persistent_steps(
+            steps,
+            dag_step,
+            "s-1-t-wrk-0",
+            "1-t-wrk-0",
+            "wrk-0",
+            "wrk-0",
+            _loaded_test(),
+            tc,
+            "ns",
+            "pvc",
+            "results",
+            {},
+            env,
+            "node",
+        )
+        assert steps[0].config["service_name"] == "svc-1-t-wrk-0-server"
+
+
+class TestAddEphemeralSteps:
+    @pytest.fixture()
+    def env(self):
+        return create_jinja_env("templates")
+
+    @pytest.fixture()
+    def tc(self):
+        return ToolConfig(**TC_DATA)
+
+    def test_no_sweep_produces_three_steps(self, env, tc):
+        dag_step = DAGStep(
+            name="runner",
+            image="img:latest",
+            command=CommandConfig(args=["./run"]),
+        )
+        steps = []
+        add_ephemeral_steps(
+            steps,
+            dag_step,
+            "s-1-t-wrk-0",
+            "1-t-wrk-0",
+            "wrk-0",
+            "wrk-0",
+            _loaded_test(),
+            tc,
+            "ns",
+            "pvc",
+            "results",
+            {},
+            env,
+            "node",
+        )
+        assert len(steps) == 3
+        assert steps[0].type == "generate"
+        assert steps[1].type == "command"
+        assert steps[1].config["probe"] == "poll-completed"
+        assert steps[2].config["command"] == "delete"
+
+    def test_sweep_produces_steps_per_entry(self, env, tc):
+        dag_step = DAGStep(
+            name="bench",
+            image="img:latest",
+            parameterSweep={
+                "baseCommand": {"args": ["./bench"], "flags": {"--threads": "1"}},
+                "entries": [
+                    {"id": "t1", "flags": {"--threads": "1"}},
+                    {"id": "t4", "flags": {"--threads": "4"}},
+                ],
+            },
+        )
+        steps = []
+        add_ephemeral_steps(
+            steps,
+            dag_step,
+            "s-1-t-wrk-0",
+            "1-t-wrk-0",
+            "wrk-0",
+            "wrk-0",
+            _loaded_test(),
+            tc,
+            "ns",
+            "pvc",
+            "results",
+            {},
+            env,
+            "node",
+        )
+        assert len(steps) == 6
+        res_names = [s.resource_name for s in steps]
+        assert "1-t-wrk-0-bench-t1" in res_names
+        assert "1-t-wrk-0-bench-t4" in res_names
+
+    def test_sweep_service_names_unique(self, env, tc):
+        dag_step = DAGStep(
+            name="bench",
+            image="img:latest",
+            service=ServiceConfig(enabled=True, name="server", port=9090),
+            parameterSweep={
+                "baseCommand": {"args": ["./bench"]},
+                "entries": [
+                    {"id": "a"},
+                    {"id": "b"},
+                ],
+            },
+        )
+        steps = []
+        add_ephemeral_steps(
+            steps,
+            dag_step,
+            "s-1-t-wrk-0",
+            "1-t-wrk-0",
+            "wrk-0",
+            "wrk-0",
+            _loaded_test(),
+            tc,
+            "ns",
+            "pvc",
+            "results",
+            {},
+            env,
+            "node",
+        )
+        svc_names = [
+            s.config["service_name"] for s in steps if "service_name" in s.config
+        ]
+        assert len(svc_names) == 2
+        assert svc_names[0] != svc_names[1]
 
 
 # -- validate_node_resources --------------------------------------------------
