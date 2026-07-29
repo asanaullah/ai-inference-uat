@@ -5,7 +5,6 @@ from src.common import create_jinja_env
 from src.models import LoadedTest, TestSpec, ToolConfig
 from src.project import compute_project_steps
 
-
 TC_DATA = {
     "oseCLIImage": "ose:latest",
     "builderImage": "golang:1.25",

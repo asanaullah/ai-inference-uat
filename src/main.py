@@ -2,7 +2,11 @@
 """CLI entry point and orchestration."""
 
 import argparse
+import json
 from pathlib import Path
+
+from jinja2 import TemplateError
+from pydantic import ValidationError
 
 from .common import create_jinja_env
 from .step_generator import generate_steps, load_steps_file
@@ -35,7 +39,7 @@ def main() -> None:
         raise SystemExit(1)
     try:
         jinja_env = create_jinja_env(templates_dir)
-    except Exception as e:
+    except (OSError, TemplateError) as e:
         print(f"Error initializing template engine: {e}")
         raise SystemExit(1)
 
@@ -45,7 +49,7 @@ def main() -> None:
         except FileNotFoundError:
             print(f"Error: steps file not found: {args.steps}")
             raise SystemExit(1)
-        except Exception as e:
+        except (json.JSONDecodeError, ValidationError, ValueError) as e:
             print(f"Error loading steps file: {e}")
             raise SystemExit(1)
         print(f"Loaded steps from {args.steps}")
@@ -68,17 +72,15 @@ def main() -> None:
             jinja_env=jinja_env,
         )
 
-    # Manual writer
     try:
         write_manual(all_steps, output_dir, args.run_id, jinja_env)
-    except Exception as e:
+    except (OSError, TemplateError, ValueError) as e:
         print(f"Error writing manual output: {e}")
         raise SystemExit(1)
 
-    # Tekton writer
     try:
         write_tekton(all_steps, tc, cs, jinja_env, output_dir)
-    except Exception as e:
+    except (OSError, TemplateError, ValueError) as e:
         print(f"Error writing Tekton output: {e}")
         raise SystemExit(1)
 

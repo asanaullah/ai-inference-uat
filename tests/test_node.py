@@ -4,7 +4,6 @@ from src.common import create_jinja_env
 from src.models import LoadedTest, NodeSpec, TestSpec, ToolConfig
 from src.node import compute_node_steps, node_meets_requirements
 
-
 # -- Fixtures -----------------------------------------------------------------
 
 TC_DATA = {

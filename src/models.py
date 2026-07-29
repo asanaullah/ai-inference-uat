@@ -2,10 +2,9 @@
 """Pydantic schemas and dataclasses for the UAT test harness."""
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
 
 # ---------------------------------------------------------------------------
 # ToolConfig (config.yaml)
@@ -57,9 +56,9 @@ class TestEntry(BaseModel):
     on_failure: Literal["continue", "skipTest", "abort"] = Field(
         "continue", alias="onFailure"
     )
-    timeout: Optional[str] = None
-    placement: Optional[Placement] = None
-    spec: Optional[dict[str, Any]] = None
+    timeout: str | None = None
+    placement: Placement | None = None
+    spec: dict[str, Any] | None = None
 
 
 class TestSuiteSpec(BaseModel):
@@ -151,17 +150,17 @@ class DAGStep(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     name: str
     image: str
-    command: Optional[CommandConfig] = None
+    command: CommandConfig | None = None
     env: list[dict[str, Any]] = []
     service: ServiceConfig = Field(default_factory=ServiceConfig)
     ports: list[dict[str, Any]] = []
-    readiness_probe: Optional[dict[str, Any]] = Field(None, alias="readinessProbe")
-    resources: Optional[dict[str, Any]] = None
+    readiness_probe: dict[str, Any] | None = Field(None, alias="readinessProbe")
+    resources: dict[str, Any] | None = None
     volume_mounts: list[dict[str, Any]] = Field(default=[], alias="volumeMounts")
     volumes: list[dict[str, Any]] = []
     persists_through_sweep: bool = Field(False, alias="persistsThroughSweep")
-    parameter_sweep: Optional[ParameterSweep] = Field(None, alias="parameterSweep")
-    label_filter: Optional[str] = Field(None, alias="labelFilter")
+    parameter_sweep: ParameterSweep | None = Field(None, alias="parameterSweep")
+    label_filter: str | None = Field(None, alias="labelFilter")
     privileged: bool = False
 
     @model_validator(mode="after")
@@ -203,10 +202,10 @@ class LoadedTest:
     spec: TestSpec
     go_source: str
     on_failure: str = "continue"
-    timeout: Optional[str] = None
+    timeout: str | None = None
     test_id: str = ""
     scope: str = "node"
-    placement: Optional[Placement] = None
+    placement: Placement | None = None
 
 
 @dataclass

@@ -37,7 +37,7 @@ def write_manual(
     for s in test_steps:
         tests_grouped.setdefault(s.test_id, []).append(s)
 
-    for _test_id, t_steps in tests_grouped.items():
+    for t_steps in tests_grouped.values():
         if t_steps[0].scope == "node":
             nodes_grouped: dict[str, list[Step]] = {}
             for s in t_steps:
@@ -47,15 +47,14 @@ def write_manual(
             for i in range(max_len):
                 wrote_any = False
                 for n in nodes:
-                    if i < len(nodes_grouped[n]):
-                        if _write_step(
-                            nodes_grouped[n][i],
-                            manual_dir,
-                            jinja_env,
-                            counter,
-                            pad_width,
-                        ):
-                            wrote_any = True
+                    if i < len(nodes_grouped[n]) and _write_step(
+                        nodes_grouped[n][i],
+                        manual_dir,
+                        jinja_env,
+                        counter,
+                        pad_width,
+                    ):
+                        wrote_any = True
                 if wrote_any:
                     counter += 1
         else:

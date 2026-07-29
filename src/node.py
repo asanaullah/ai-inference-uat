@@ -10,9 +10,9 @@ from .models import LoadedTest, NodeSpec, Step, ToolConfig
 
 
 def node_meets_requirements(requirements: Any, node_spec: NodeSpec) -> bool:
-    if requirements.gpu and node_spec.component_validation.sanity.gpu_count <= 0:
-        return False
-    return True
+    return not (
+        requirements.gpu and node_spec.component_validation.sanity.gpu_count <= 0
+    )
 
 
 def compute_node_steps(

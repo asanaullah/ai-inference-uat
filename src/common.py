@@ -118,7 +118,7 @@ def validate_manifest(content: str) -> None:
         if doc is None:
             continue
         if not isinstance(doc, dict):
-            raise ValueError(f"Manifest document is not a mapping: {doc}")
+            raise TypeError(f"Manifest document is not a mapping: {doc}")
         for required in ("apiVersion", "kind"):
             if required not in doc:
                 raise ValueError(

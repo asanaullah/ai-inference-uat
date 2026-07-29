@@ -1,10 +1,9 @@
 # Assisted by Claude Opus 4.6
 import pytest
 
-from src.cluster import compute_cluster_steps, _filter_nodes
+from src.cluster import _filter_nodes, compute_cluster_steps
 from src.common import create_jinja_env
 from src.models import LoadedTest, NodeSpec, Placement, TestSpec, ToolConfig
-
 
 TC_DATA = {
     "oseCLIImage": "ose:latest",
@@ -154,7 +153,7 @@ class TestComputeClusterSteps:
             },
             {"name": "client", "image": "img", "labelFilter": "pass-fail"},
         ]
-        steps, mappings = compute_cluster_steps(
+        steps, _mappings = compute_cluster_steps(
             _test(dag=dag, placement=placement),
             tc,
             "ns",
@@ -164,8 +163,8 @@ class TestComputeClusterSteps:
             nodes=nodes,
         )
         gen_steps = [s for s in steps if s.type == "generate"]
-        server_gen = [s for s in gen_steps if "server" in s.name][0]
-        client_gen = [s for s in gen_steps if "client" in s.name][0]
+        server_gen = next(s for s in gen_steps if "server" in s.name)
+        client_gen = next(s for s in gen_steps if "client" in s.name)
         assert "wrk-1" in server_gen.content or "wrk-2" in server_gen.content
         assert "wrk-1" in client_gen.content or "wrk-2" in client_gen.content
 
@@ -198,7 +197,7 @@ class TestComputeClusterSteps:
     def test_set_cutoff_limits_sets(self, env, tc):
         nodes = [_node("a"), _node("b"), _node("c")]
         placement = Placement(setSelection="all", setCutoff=2, setSize=1)
-        steps, mappings = compute_cluster_steps(
+        _steps, mappings = compute_cluster_steps(
             _test(placement=placement), tc, "ns", "pvc", "results", env, nodes=nodes
         )
         assert len(mappings) == 2

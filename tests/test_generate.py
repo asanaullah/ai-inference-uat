@@ -1,6 +1,7 @@
 import pytest
 
 from src.common import create_jinja_env
+from src.models import ClusterTestSpec, LoadedTest, Step, TestSpec, ToolConfig
 from src.step_generator import (
     _validate_unique_pod_names,
     compute_setup_steps,
@@ -13,8 +14,6 @@ from src.writers.tekton import (
     _render_tekton_task,
     _resolve_manifest,
 )
-from src.models import ClusterTestSpec, LoadedTest, Step, TestSpec, ToolConfig
-
 
 # -- Fixtures -----------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 <!-- Assisted by Claude Opus 4.6 -->
 # AI Inference UAT Harness
-A declarative test harness that generates Kubernetes manifests from test definitions. Given a set of target nodes and a test suite, the generator produces both manually-executable manifests, as well as Tekton pipeline manifests for automated execution on OpenShift.
+A declarative test harness that generates Kubernetes manifests from test definitions. Given a cluster configuration (target nodes, namespace, and storage) and a test suite, the generator produces both manually-executable manifests, as well as Tekton pipeline manifests for automated execution on OpenShift.
 
 ## Table of Contents
 
@@ -125,6 +125,10 @@ Tests are registered in `test_suite.yaml` as an ordered list, each with a scope 
 ```yaml
 spec:
   tests:
+    - name: platform-check
+      scope: project
+      onFailure: continue
+
     - name: component
       scope: node
       onFailure: continue
@@ -133,12 +137,16 @@ spec:
       scope: node
       onFailure: abort
       timeout: 1200s
+
+    - name: iperf3
+      scope: cluster
+      onFailure: continue
 ```
 
 The `onFailure` field controls what happens when a step within the test fails (default: `continue`):
 - `continue` — all steps run regardless of failures. Guard task proceeds to the next test.
-- `skipTest` — remaining steps in the failing node's chain are skipped (teardown still runs). Guard task proceeds to the next test.
-- `abort` — remaining steps in the failing node's chain are skipped, other nodes complete normally. Guard task halts the pipeline.
+- `skipTest` — remaining steps in the failing test's chain are skipped (teardown still runs). Guard task proceeds to the next test. For node-scoped tests, only the failing node's chain is skipped; other nodes complete normally.
+- `abort` — remaining steps in the failing test's chain are skipped. Guard task halts the pipeline. For node-scoped tests, only the failing node's chain is skipped; other nodes complete normally before the pipeline stops.
 
 The optional `timeout` field overrides the default `defaultTestTimeout` from `config.yaml` for this test's ephemeral pods.
 
@@ -379,7 +387,7 @@ Each test defines an ordered DAG of resources to deploy and run. Steps are eithe
 | `labelFilter` | Ginkgo label filter for the compiled binary |
 | `command` | Structured command with `args` and `flags` |
 | `parameterSweep` | If set, one pod per entry with merged flags |
-| `service` | If `enabled: true`, creates a Kubernetes Service for this pod. `headless: true` (default) creates a headless Service (ClusterIP: None) |
+| `service` | Service configuration block (see [DAG Pods with Services](#dag-pods-with-services)). Fields: `enabled` (bool, default `false`), `name` (string, used in `services["name"]` template lookups), `port` (int, default `8000`), `headless` (bool, default `true` — sets `clusterIP: None`) |
 | `env` | Environment variables (values are Jinja2 templates) |
 | `resources` | CPU/GPU/memory requests and limits |
 | `readinessProbe` | Readiness probe for persistent pods |
@@ -439,6 +447,7 @@ dag:
       enabled: true
       port: 8000
       name: vllm-server
+      headless: true
     command:
       args: [python, -m, vllm.entrypoints.openai.api_server]
       flags:
@@ -459,7 +468,7 @@ dag:
         value: '{{ services["vllm-server"].url }}'
 ```
 
-The generator creates a Kubernetes Service alongside the pod. Downstream steps reference it via `{{ services["vllm-server"].url }}`, which resolves to `http://svc-<test_id>-<test>-<node>-vllm-server:8000`. Service names are prefixed with `svc-` for DNS-1035 compliance.
+The generator creates a Kubernetes Service alongside the pod. Downstream steps reference it via `{{ services["vllm-server"].url }}`, which resolves to `http://svc-<test_id>-<test>-<node>-vllm-server:8000`. Service names are prefixed with `svc-` for DNS-1035 compliance. By default, services are headless (`clusterIP: None`) — traffic routes directly to the pod IP without kube-proxy load balancing. Set `headless: false` to create a standard ClusterIP service instead.
 
 ### Spec Override
 
@@ -742,6 +751,7 @@ examples/
   minimal/            Example test suite (test definitions, Go source)
 cluster/              Cluster configs
 config.yaml           Tool config
+conftest.py           Adds project root to sys.path for pytest
 requirements.txt      Python dependencies
 ```
 

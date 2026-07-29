@@ -7,7 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import yaml
-from jinja2 import Environment
+from jinja2 import Environment, TemplateError
 from pydantic import ValidationError
 
 from .cluster import compute_cluster_steps
@@ -22,7 +22,6 @@ from .common import (
 from .models import ClusterTestSpec, LoadedTest, Step, StepsFile, ToolConfig
 from .node import compute_node_steps
 from .project import compute_project_steps
-
 
 _RFC1123_RE = re.compile(r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$")
 _DNS1035_RE = re.compile(r"^[a-z]([a-z0-9\-]*[a-z0-9])?$")
@@ -348,7 +347,7 @@ def generate_steps(
             test_suite_path,
             aggregate_py,
         )
-    except Exception as e:
+    except (OSError, ValueError, TypeError, TemplateError) as e:
         print(f"Error computing setup steps: {e}")
         raise SystemExit(1)
 
@@ -394,13 +393,13 @@ def generate_steps(
                         jinja_env,
                     )
                 )
-        except Exception as e:
+        except (ValueError, TypeError, TemplateError) as e:
             print(f"Error computing steps for test {test.name}: {e}")
             raise SystemExit(1)
 
     try:
         teardown_steps = compute_teardown_steps(tc, cs, jinja_env)
-    except Exception as e:
+    except (ValueError, TypeError, TemplateError) as e:
         print(f"Error computing teardown steps: {e}")
         raise SystemExit(1)
 
@@ -416,7 +415,7 @@ def generate_steps(
             output_dir / "steps.json",
             set_mappings=all_set_mappings or None,
         )
-    except Exception as e:
+    except (OSError, TypeError) as e:
         print(f"Error writing steps.json: {e}")
         raise SystemExit(1)
     print(f"Steps DAG written to {output_dir / 'steps.json'}")

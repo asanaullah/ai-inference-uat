@@ -86,7 +86,7 @@ class TestToolConfig:
 
 class TestTestSuite:
     def test_minimal(self):
-        ts = TestSuite(**{"spec": {"tests": [{"name": "a", "scope": "node"}]}})
+        ts = TestSuite(spec={"tests": [{"name": "a", "scope": "node"}]})
         assert ts.spec.tests[0].name == "a"
         assert ts.spec.tests[0].scope == "node"
         assert ts.spec.tests[0].on_failure == "continue"
@@ -94,13 +94,11 @@ class TestTestSuite:
 
     def test_timeout_override(self):
         ts = TestSuite(
-            **{
-                "spec": {
-                    "tests": [
-                        {"name": "a", "scope": "node", "timeout": "1200s"},
-                        {"name": "b", "scope": "node"},
-                    ]
-                }
+            spec={
+                "tests": [
+                    {"name": "a", "scope": "node", "timeout": "1200s"},
+                    {"name": "b", "scope": "node"},
+                ]
             }
         )
         assert ts.spec.tests[0].timeout == "1200s"
@@ -108,14 +106,12 @@ class TestTestSuite:
 
     def test_on_failure(self):
         ts = TestSuite(
-            **{
-                "spec": {
-                    "tests": [
-                        {"name": "a", "scope": "node", "onFailure": "abort"},
-                        {"name": "b", "scope": "cluster", "onFailure": "skipTest"},
-                        {"name": "c", "scope": "project"},
-                    ]
-                }
+            spec={
+                "tests": [
+                    {"name": "a", "scope": "node", "onFailure": "abort"},
+                    {"name": "b", "scope": "cluster", "onFailure": "skipTest"},
+                    {"name": "c", "scope": "project"},
+                ]
             }
         )
         assert ts.spec.tests[0].on_failure == "abort"
@@ -124,7 +120,7 @@ class TestTestSuite:
 
     def test_missing_tests(self):
         with pytest.raises(ValidationError):
-            TestSuite(**{"spec": {}})
+            TestSuite(spec={})
 
 
 # -- ClusterTest / NodeSpec ---------------------------------------------------
@@ -132,7 +128,7 @@ class TestTestSuite:
 
 class TestClusterTest:
     def test_parse(self):
-        ct = ClusterTest(**{"spec": CLUSTER_SPEC_DATA})
+        ct = ClusterTest(spec=CLUSTER_SPEC_DATA)
         assert ct.spec.namespace == "ns"
         assert ct.spec.nodes[0].name == "wrk-1"
         assert ct.spec.nodes[0].component_validation.sanity.gpu_count == 4
@@ -156,11 +152,9 @@ class TestClusterTest:
 class TestTestDefinition:
     def test_minimal_test(self):
         t = Test(
-            **{
-                "spec": {
-                    "source": {"ginkgo": "t.go"},
-                    "dag": [{"name": "run", "image": "img"}],
-                }
+            spec={
+                "source": {"ginkgo": "t.go"},
+                "dag": [{"name": "run", "image": "img"}],
             }
         )
         assert t.spec.dag[0].name == "run"

@@ -2,16 +2,15 @@ import pytest
 
 from src.common import (
     _deep_merge_spec,
+    _yaml_quote,
     build_command,
     create_jinja_env,
     parse_k8s_quantity,
     sanitize_node_name,
     validate_manifest,
     validate_node_resources,
-    _yaml_quote,
 )
 from src.models import LoadedTest, NodeSpec, TestSpec
-
 
 # -- validate_manifest --------------------------------------------------------
 
@@ -45,7 +44,7 @@ class TestValidateManifest:
             validate_manifest("apiVersion: v1\nkind: Pod\nmetadata: {}\n")
 
     def test_not_a_mapping(self):
-        with pytest.raises(ValueError, match="not a mapping"):
+        with pytest.raises(TypeError, match="not a mapping"):
             validate_manifest("- item\n")
 
     def test_null_doc_skipped(self):
@@ -185,9 +184,9 @@ class TestDeepMergeSpec:
         override = {"dag": {"server": {"image": "new"}}}
         result = _deep_merge_spec(base, override)
         assert len(result["dag"]) == 2
-        server = [d for d in result["dag"] if d["name"] == "server"][0]
+        server = next(d for d in result["dag"] if d["name"] == "server")
         assert server["image"] == "new"
-        client = [d for d in result["dag"] if d["name"] == "client"][0]
+        client = next(d for d in result["dag"] if d["name"] == "client")
         assert client["image"] == "img"
 
     def test_nested_merge(self):
