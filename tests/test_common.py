@@ -213,6 +213,34 @@ class TestDeepMergeSpec:
         result = _deep_merge_spec(base, override)
         assert result["x"] == [4, 5]
 
+    def test_dag_deep_merges_step_overrides(self):
+        base = {
+            "dag": [
+                {
+                    "name": "server",
+                    "image": "img",
+                    "service": {"enabled": True, "port": 8080},
+                }
+            ]
+        }
+        override = {"dag": {"server": {"service": {"port": 9090}}}}
+        result = _deep_merge_spec(base, override)
+        svc = result["dag"][0]["service"]
+        assert svc["port"] == 9090
+        assert svc["enabled"] is True
+
+    def test_dag_unknown_step_raises(self):
+        base = {"dag": [{"name": "server", "image": "img"}]}
+        override = {"dag": {"typo": {"image": "new"}}}
+        with pytest.raises(ValueError, match="unknown step 'typo'"):
+            _deep_merge_spec(base, override)
+
+    def test_dag_list_override_raises(self):
+        base = {"dag": [{"name": "server", "image": "old"}]}
+        override = {"dag": [{"name": "client", "image": "new"}]}
+        with pytest.raises(TypeError, match="must be a dict keyed by step name"):
+            _deep_merge_spec(base, override)
+
 
 # -- parse_k8s_quantity -------------------------------------------------------
 

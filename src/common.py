@@ -137,12 +137,22 @@ def _deep_merge_spec(base: dict[str, Any], override: dict[str, Any]) -> dict[str
     result = dict(base)
     for key, value in override.items():
         if key == "dag":
-            steps = [dict(s) for s in result.get("dag", [])]
-            steps_by_name = {s["name"]: s for s in steps}
-            for step_name, step_overrides in value.items():
-                if step_name in steps_by_name:
-                    steps_by_name[step_name].update(step_overrides)
-            result["dag"] = list(steps_by_name.values())
+            if not isinstance(value, dict):
+                raise TypeError(
+                    "dag override must be a dict keyed by step name, not a list"
+                )
+            else:
+                steps = [dict(s) for s in result.get("dag", [])]
+                steps_by_name = {s["name"]: s for s in steps}
+                for step_name, step_overrides in value.items():
+                    if step_name not in steps_by_name:
+                        raise ValueError(
+                            f"dag override references unknown step '{step_name}'"
+                        )
+                    steps_by_name[step_name] = _deep_merge_spec(
+                        steps_by_name[step_name], step_overrides
+                    )
+                result["dag"] = list(steps_by_name.values())
         elif (
             key in result and isinstance(result[key], dict) and isinstance(value, dict)
         ):
