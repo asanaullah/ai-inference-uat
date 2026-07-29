@@ -12,8 +12,10 @@ spec:
     - name: {{ task.name }}
       taskRef:
         name: {{ task.ref_name }}
-{% if task.params is defined and task.params %}
       params:
+        - name: timestamp
+          value: $(context.pipelineRun.name)
+{% if task.params is defined and task.params %}
 {% for p in task.params %}
         - name: {{ p.name }}
           value: {{ p.value | yaml_quote }}
@@ -46,6 +48,9 @@ spec:
     - name: {{ task.name }}
       taskRef:
         name: {{ task.ref_name }}
+      params:
+        - name: timestamp
+          value: $(context.pipelineRun.name)
 {% if task.run_after is defined and task.run_after %}
       runAfter:
 {% for dep in task.run_after %}

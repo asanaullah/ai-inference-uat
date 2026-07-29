@@ -22,7 +22,7 @@ def write_tekton(
         shutil.rmtree(tekton_dir)
     tekton_dir.mkdir(parents=True)
 
-    ts = "$(context.pipelineRun.name)"
+    ts = "$(params.timestamp)"
 
     setup_steps = [s for s in steps if s.phase == "setup"]
     test_steps = [s for s in steps if s.phase == "test"]

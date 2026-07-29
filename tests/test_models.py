@@ -67,12 +67,12 @@ class TestToolConfig:
 
     def test_defaults(self):
         tc = ToolConfig(**TOOL_CONFIG_DATA)
-        assert tc.builder_timeout == "300s"
-        assert tc.aggregator_timeout == "120s"
-        assert tc.deploy_timeout == "600s"
-        assert tc.default_test_timeout == "600s"
-        assert tc.pipeline_timeout == "2h"
-        assert tc.finally_timeout == "15m"
+        assert tc.builder_timeout == 300
+        assert tc.aggregator_timeout == 120
+        assert tc.deploy_timeout == 600
+        assert tc.default_test_timeout == 600
+        assert tc.pipeline_timeout == 7200
+        assert tc.finally_timeout == 900
 
     def test_missing_required_field(self):
         with pytest.raises(ValidationError):
@@ -96,12 +96,12 @@ class TestTestSuite:
         ts = TestSuite(
             spec={
                 "tests": [
-                    {"name": "a", "scope": "node", "timeout": "1200s"},
+                    {"name": "a", "scope": "node", "timeout": 1200},
                     {"name": "b", "scope": "node"},
                 ]
             }
         )
-        assert ts.spec.tests[0].timeout == "1200s"
+        assert ts.spec.tests[0].timeout == 1200
         assert ts.spec.tests[1].timeout is None
 
     def test_on_failure(self):

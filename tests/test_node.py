@@ -138,7 +138,7 @@ class TestComputeNodeSteps:
     def test_timeout_override(self, env, tc):
         steps = compute_node_steps(
             _node(),
-            _test(timeout="1200s"),
+            _test(timeout=1200),
             tc,
             "ns",
             "pvc",
@@ -152,7 +152,7 @@ class TestComputeNodeSteps:
         ]
         assert run_steps
         for s in run_steps:
-            assert s.config["timeout"] == "1200s"
+            assert s.config["timeout"] == 1200
 
     def test_timeout_default_fallback(self, env, tc):
         steps = compute_node_steps(
@@ -171,7 +171,7 @@ class TestComputeNodeSteps:
         ]
         assert run_steps
         for s in run_steps:
-            assert s.config["timeout"] == "600s"
+            assert s.config["timeout"] == 600
 
     def test_finally_step_flag(self, env, tc):
         steps = compute_node_steps(

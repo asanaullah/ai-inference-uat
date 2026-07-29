@@ -8,9 +8,9 @@ builderPodName: ginkgo-builder
 aggregatorPodName: uat-aggregator
 nodeSelectorKey: kubernetes.io/hostname
 managedByLabel: uat-generator
-builderTimeout: 300s
-aggregatorTimeout: 120s
-deployTimeout: 600s
-defaultTestTimeout: 600s
-pipelineTimeout: 2h
-finallyTimeout: 15m
+builderTimeout: 300
+aggregatorTimeout: 120
+deployTimeout: 600
+defaultTestTimeout: 600
+pipelineTimeout: 7200
+finallyTimeout: 900

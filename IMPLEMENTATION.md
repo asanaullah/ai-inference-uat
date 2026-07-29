@@ -288,8 +288,8 @@ project-scoped chain (single, no nodeSelector):
 #### PipelineRun
 
 - Uses `generateName: uat-cluster-run-` (auto-generated unique name per run)
-- Sets `spec.timeouts.pipeline` from `config.yaml`'s `pipelineTimeout` (default `2h`)
-- Sets `spec.timeouts.finally` from `config.yaml`'s `finallyTimeout` (default `15m`) — reserves time for aggregation and cleanup so they run even if the pipeline times out
+- Sets `spec.timeouts.pipeline` from `config.yaml`'s `pipelineTimeout` (default `7200`, i.e. 2 hours)
+- Sets `spec.timeouts.finally` from `config.yaml`'s `finallyTimeout` (default `900`, i.e. 15 minutes) — reserves time for aggregation and cleanup so they run even if the pipeline times out
 - The generated name becomes the `$(context.pipelineRun.name)` value referenced by all tasks
 
 ## Config Field Usage Map
@@ -359,12 +359,12 @@ Every parsed config field and where it takes effect. **This is the section to ch
 | `aggregatorPodName` | `ToolConfig.aggregator_pod_name` | Fixed name for the aggregator pod |
 | `nodeSelectorKey` | `ToolConfig.node_selector_key` | Kubernetes label key for nodeSelector (e.g. `kubernetes.io/hostname`) |
 | `managedByLabel` | `ToolConfig.managed_by_label` | Value for `app.kubernetes.io/managed-by` label |
-| `builderTimeout` | `ToolConfig.builder_timeout` | Timeout for builder pod readiness probe (default `300s`) |
-| `aggregatorTimeout` | `ToolConfig.aggregator_timeout` | Timeout for aggregator pod readiness probe (default `120s`) |
-| `deployTimeout` | `ToolConfig.deploy_timeout` | Timeout for DAG pod readiness probes (default `600s`) |
-| `defaultTestTimeout` | `ToolConfig.default_test_timeout` | Default timeout for test pod completion polling (default `600s`). Can be overridden per-test via `timeout` in `test_suite.yaml` |
-| `pipelineTimeout` | `ToolConfig.pipeline_timeout` | Sets `spec.timeouts.pipeline` on the PipelineRun manifest (default `2h`) |
-| `finallyTimeout` | `ToolConfig.finally_timeout` | Sets `spec.timeouts.finally` on the PipelineRun manifest — reserves time for aggregation and cleanup after pipeline timeout (default `15m`) |
+| `builderTimeout` | `ToolConfig.builder_timeout` | Timeout for builder pod readiness probe, integer seconds (default `300`) |
+| `aggregatorTimeout` | `ToolConfig.aggregator_timeout` | Timeout for aggregator pod readiness probe, integer seconds (default `120`) |
+| `deployTimeout` | `ToolConfig.deploy_timeout` | Timeout for DAG pod readiness probes, integer seconds (default `600`) |
+| `defaultTestTimeout` | `ToolConfig.default_test_timeout` | Default timeout for test pod completion polling, integer seconds (default `600`). Can be overridden per-test via `timeout` in `test_suite.yaml` |
+| `pipelineTimeout` | `ToolConfig.pipeline_timeout` | Sets `spec.timeouts.pipeline` on the PipelineRun manifest, integer seconds (default `7200`) |
+| `finallyTimeout` | `ToolConfig.finally_timeout` | Sets `spec.timeouts.finally` on the PipelineRun manifest — reserves time for aggregation and cleanup after pipeline timeout, integer seconds (default `900`) |
 
 ## Timestamp Flow (Critical Path)
 

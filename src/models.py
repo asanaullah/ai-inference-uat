@@ -22,12 +22,12 @@ class ToolConfig(BaseModel):
     aggregator_pod_name: str = Field(alias="aggregatorPodName")
     node_selector_key: str = Field(alias="nodeSelectorKey")
     managed_by_label: str = Field(alias="managedByLabel")
-    builder_timeout: str = Field("300s", alias="builderTimeout")
-    aggregator_timeout: str = Field("120s", alias="aggregatorTimeout")
-    deploy_timeout: str = Field("600s", alias="deployTimeout")
-    default_test_timeout: str = Field("600s", alias="defaultTestTimeout")
-    pipeline_timeout: str = Field("2h", alias="pipelineTimeout")
-    finally_timeout: str = Field("15m", alias="finallyTimeout")
+    builder_timeout: int = Field(300, alias="builderTimeout")
+    aggregator_timeout: int = Field(120, alias="aggregatorTimeout")
+    deploy_timeout: int = Field(600, alias="deployTimeout")
+    default_test_timeout: int = Field(600, alias="defaultTestTimeout")
+    pipeline_timeout: int = Field(7200, alias="pipelineTimeout")
+    finally_timeout: int = Field(900, alias="finallyTimeout")
     ginkgo_version: str = Field("v2.32.0", alias="ginkgoVersion")
 
 
@@ -56,7 +56,7 @@ class TestEntry(BaseModel):
     on_failure: Literal["continue", "skipTest", "abort"] = Field(
         "continue", alias="onFailure"
     )
-    timeout: str | None = None
+    timeout: int | None = None
     placement: Placement | None = None
     spec: dict[str, Any] | None = None
 
@@ -202,7 +202,7 @@ class LoadedTest:
     spec: TestSpec
     go_source: str
     on_failure: str = "continue"
-    timeout: str | None = None
+    timeout: int | None = None
     test_id: str = ""
     scope: str = "node"
     placement: Placement | None = None

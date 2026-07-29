@@ -18,9 +18,8 @@ spec:
         {{ manifest | indent(8) }}
         MANIFEST_EOF
 
-        echo "Waiting for pod {{ pod_name }} to complete (timeout: {{ timeout }})..."
-        TIMEOUT_SECS=$(echo "{{ timeout }}" | sed 's/s$//')
-        DEADLINE=$(($(date +%s) + TIMEOUT_SECS))
+        echo "Waiting for pod {{ pod_name }} to complete (timeout: {{ timeout }}s)..."
+        DEADLINE=$(($(date +%s) + {{ timeout }}))
         while true; do
           PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
           if [ "$PHASE" = "Succeeded" ]; then

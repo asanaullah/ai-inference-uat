@@ -31,7 +31,7 @@ The generator takes three inputs: a **test suite** (`test_suite.yaml`) that defi
        - name: inference
          scope: node
          onFailure: abort
-         timeout: 1200s
+         timeout: 1200
          spec:                              # override test.yaml defaults
            dag:
              vllm-server:                   # match DAG step by name

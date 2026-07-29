@@ -97,7 +97,7 @@ class TestComputeProjectSteps:
 
     def test_timeout_override(self, env, tc):
         steps = compute_project_steps(
-            _test(timeout="1200s"), tc, "ns", "pvc", "results", env
+            _test(timeout=1200), tc, "ns", "pvc", "results", env
         )
         run_steps = [
             s
@@ -106,7 +106,7 @@ class TestComputeProjectSteps:
         ]
         assert run_steps
         for s in run_steps:
-            assert s.config["timeout"] == "1200s"
+            assert s.config["timeout"] == 1200
 
     def test_sweep_creates_multiple_pods(self, env, tc):
         dag = [

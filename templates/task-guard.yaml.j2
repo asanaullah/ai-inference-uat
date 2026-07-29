@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/managed-by: {{ managed_by_label }}
 spec:
   params:
+    - name: timestamp
+      type: string
     - name: statuses
       type: string
       description: Comma-separated task statuses to check

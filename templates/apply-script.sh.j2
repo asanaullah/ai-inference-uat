@@ -8,8 +8,8 @@ echo "Applied {{ manifest }}"
 {% elif probe == "wait-ready" %}
 echo "Applying {{ manifest }}..."
 oc apply -f {{ manifest }}
-echo "Waiting for {{ pod_name }} to be ready (timeout: {{ timeout }})..."
-oc wait --for=condition=Ready pod/{{ pod_name }} --timeout={{ timeout }}
+echo "Waiting for {{ pod_name }} to be ready (timeout: {{ timeout }}s)..."
+oc wait --for=condition=Ready pod/{{ pod_name }} --timeout={{ timeout }}s
 echo "{{ pod_name }} is ready"
 echo "--- {{ pod_name }} recent logs ---"
 oc logs {{ pod_name }} --tail=10 || true
@@ -38,9 +38,8 @@ elif [ "$PHASE" = "Failed" ]; then
   exit 1
 fi
 
-echo "Waiting for {{ pod_name }} to complete (timeout: {{ timeout }})..."
-TIMEOUT_SECS=$(echo "{{ timeout }}" | sed 's/s$//')
-DEADLINE=$(($(date +%s) + TIMEOUT_SECS))
+echo "Waiting for {{ pod_name }} to complete (timeout: {{ timeout }}s)..."
+DEADLINE=$(($(date +%s) + {{ timeout }}))
 while true; do
   PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
   if [ "$PHASE" = "Succeeded" ]; then
@@ -51,7 +50,7 @@ while true; do
     exit 1
   fi
   if [ "$(date +%s)" -ge "$DEADLINE" ]; then
-    echo "TIMEOUT: {{ pod_name }} did not complete within {{ timeout }}"
+    echo "TIMEOUT: {{ pod_name }} did not complete within {{ timeout }}s"
     exit 1
   fi
   sleep 5

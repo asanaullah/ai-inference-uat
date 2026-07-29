@@ -136,7 +136,7 @@ spec:
     - name: inference
       scope: node
       onFailure: abort
-      timeout: 1200s
+      timeout: 1200
 
     - name: iperf3
       scope: cluster
@@ -148,7 +148,7 @@ The `onFailure` field controls what happens when a step within the test fails (d
 - `skipTest` — remaining steps in the failing test's chain are skipped (teardown still runs). Guard task proceeds to the next test. For node-scoped tests, only the failing node's chain is skipped; other nodes complete normally.
 - `abort` — remaining steps in the failing test's chain are skipped. Guard task halts the pipeline. For node-scoped tests, only the failing node's chain is skipped; other nodes complete normally before the pipeline stops.
 
-The optional `timeout` field overrides the default `defaultTestTimeout` from `config.yaml` for this test's ephemeral pods.
+The optional `timeout` field (integer, seconds) overrides the `defaultTestTimeout` from `config.yaml` for this test's ephemeral pods.
 
 #### Placement (Cluster Scope)
 
@@ -302,7 +302,7 @@ spec:
     - name: inference
       scope: node
       onFailure: abort
-      timeout: 1200s
+      timeout: 1200
     - name: my-test           # add here
       scope: node
       onFailure: continue
@@ -536,13 +536,15 @@ builderPodName: ginkgo-builder
 aggregatorPodName: uat-aggregator
 nodeSelectorKey: kubernetes.io/hostname
 managedByLabel: uat-generator
-builderTimeout: 300s
-aggregatorTimeout: 120s
-deployTimeout: 600s
-defaultTestTimeout: 600s
-pipelineTimeout: 2h
-finallyTimeout: 15m
+builderTimeout: 300
+aggregatorTimeout: 120
+deployTimeout: 600
+defaultTestTimeout: 600
+pipelineTimeout: 7200
+finallyTimeout: 900
 ```
+
+All timeout values are integers in seconds.
 
 ## Extensibility
 
@@ -556,12 +558,12 @@ spec:
     - name: inference
       scope: node
       onFailure: abort
-      timeout: 1200s        # override defaultTestTimeout from config.yaml
+      timeout: 1200        # override defaultTestTimeout from config.yaml
 
     - name: inference        # same test, different policy
       scope: node
       onFailure: continue
-      timeout: 3600s
+      timeout: 3600
 ```
 
 ### Custom Step Injection (steps.json)
@@ -661,7 +663,7 @@ All images, pod names, labels, and timeouts are configurable via `config.yaml`. 
 ```yaml
 builderImage: my-registry/go-builder:1.25   # custom builder with extra tools
 nodeSelectorKey: my.org/node-role            # custom label key
-deployTimeout: 1200s                          # longer timeout for slow infrastructure
+deployTimeout: 1200                           # longer timeout for slow infrastructure
 ```
 
 ### Manifest Validation
