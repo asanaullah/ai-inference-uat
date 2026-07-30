@@ -62,8 +62,8 @@ spec:
           transparentHugepages: madvise
 
 
-  namespace: coldpress-project
+  namespace: uat-project
 
   storage:
-    pvc: coldpress-project-storage
+    pvc: uat-project-storage
     basePath: uat/results
