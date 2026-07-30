@@ -75,8 +75,7 @@ class TestSuite(BaseModel):
 
 
 class SanityCheck(BaseModel):
-    model_config = ConfigDict(extra="allow", populate_by_name=True)
-    gpu_count: int = Field(alias="gpuCount")
+    model_config = ConfigDict(extra="allow")
 
 
 class ComponentValidation(BaseModel):
@@ -142,10 +141,6 @@ class ParameterSweep(BaseModel):
     entries: list[SweepEntry]
 
 
-class TestRequirements(BaseModel):
-    gpu: bool = False
-
-
 class DAGStep(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     name: str
@@ -181,7 +176,6 @@ class TestSource(BaseModel):
 
 class TestSpec(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    requirements: TestRequirements = Field(default_factory=TestRequirements)
     source: TestSource
     dag: list[DAGStep]
     server_config: dict[str, Any] = Field(default={}, alias="serverConfig")

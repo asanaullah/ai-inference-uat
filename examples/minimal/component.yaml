@@ -6,9 +6,6 @@ metadata:
   version: v0.0.1
   description: Validate node hardware and software against cluster specification
 spec:
-  requirements:
-    gpu: true
-
   source:
     ginkgo: component.go
 
@@ -18,9 +15,9 @@ spec:
       labelFilter: pass-fail
       resources:
         requests:
-          nvidia.com/gpu: '{{ nodeSpec.componentValidation.sanity.gpuCount }}'
+          nvidia.com/gpu: '{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}'
         limits:
-          nvidia.com/gpu: '{{ nodeSpec.componentValidation.sanity.gpuCount }}'
+          nvidia.com/gpu: '{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}'
       env:
         - name: NODE_NAME
           value: '{{ nodeSpec.name }}'

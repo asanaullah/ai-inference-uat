@@ -33,17 +33,21 @@ type ComplianceSpec struct {
 	FipsEnabled bool `yaml:"fipsEnabled"`
 }
 
+type ResourceNames struct {
+	GpuModel string `yaml:"nvidia.com/gpu"`
+	CpuModel string `yaml:"cpu"`
+}
+
 type SanitySpec struct {
-	GpuCount       int    `yaml:"gpuCount"`
-	GpuModel       string `yaml:"gpuModel"`
-	Nvlink         string `yaml:"nvlink"`
-	NvlinkTopology string `yaml:"nvlinkTopology"`
-	PcieWidth      int    `yaml:"pcieWidth"`
-	PcieGen        int    `yaml:"pcieGen"`
-	CpuModel       string `yaml:"cpuModel"`
-	CpuCount       int    `yaml:"cpuCount"`
-	Memory         string `yaml:"memory"`
-	NumaNodes      int    `yaml:"numaNodes"`
+	GpuCount       int           `yaml:"nvidia.com/gpu"`
+	CpuCount       int           `yaml:"cpu"`
+	Memory         string        `yaml:"memory"`
+	ResourceNames  ResourceNames `yaml:"resourceNames"`
+	Nvlink         string        `yaml:"nvlink"`
+	NvlinkTopology string        `yaml:"nvlinkTopology"`
+	PcieWidth      int           `yaml:"pcieWidth"`
+	PcieGen        int           `yaml:"pcieGen"`
+	NumaNodes      int           `yaml:"numaNodes"`
 }
 
 type IdealSpec struct {
@@ -106,8 +110,8 @@ var _ = BeforeSuite(func() {
 	compliance = cluster.Spec.Compliance
 
 	GinkgoWriter.Printf("Node: %s\n", nodeName)
-	GinkgoWriter.Printf("Expected GPU: %dx %s\n", sanity.GpuCount, sanity.GpuModel)
-	GinkgoWriter.Printf("Expected CPU: %s (count: %d)\n", sanity.CpuModel, sanity.CpuCount)
+	GinkgoWriter.Printf("Expected GPU: %dx %s\n", sanity.GpuCount, sanity.ResourceNames.GpuModel)
+	GinkgoWriter.Printf("Expected CPU: %s (count: %d)\n", sanity.ResourceNames.CpuModel, sanity.CpuCount)
 	GinkgoWriter.Printf("Expected memory: %s\n", sanity.Memory)
 })
 
@@ -170,17 +174,17 @@ var _ = Describe("Sanity Checks", Label("pass-fail"), func() {
 		Expect(count).To(Equal(sanity.GpuCount),
 			"GPU count mismatch: nvidia-smi reports %d GPU(s) but the cluster config expects %d. "+
 				"This means the node is either missing GPUs (hardware fault, driver issue) or the "+
-				"cluster config has the wrong gpuCount for this node.", count, sanity.GpuCount)
+				"cluster config has the wrong nvidia.com/gpu count for this node.", count, sanity.GpuCount)
 	})
 
 	It("should detect correct GPU model", func() {
 		gpuName := nvidiaSmiQuery("name")
 		actual := strings.ReplaceAll(gpuName, " ", "-")
-		GinkgoWriter.Printf("GPU model: %s (expected: %s)\n", actual, sanity.GpuModel)
-		Expect(actual).To(Equal(sanity.GpuModel),
+		GinkgoWriter.Printf("GPU model: %s (expected: %s)\n", actual, sanity.ResourceNames.GpuModel)
+		Expect(actual).To(Equal(sanity.ResourceNames.GpuModel),
 			"GPU model mismatch: nvidia-smi reports '%s' but the cluster config expects '%s'. "+
 				"This node may have been assigned the wrong spec in cluster.yaml, or GPUs were "+
-				"physically swapped without updating the config.", actual, sanity.GpuModel)
+				"physically swapped without updating the config.", actual, sanity.ResourceNames.GpuModel)
 	})
 
 	It("should have correct NVLink width", func() {
@@ -237,7 +241,7 @@ var _ = Describe("Sanity Checks", Label("pass-fail"), func() {
 					if nvRe.MatchString(f) {
 						nvConnections++
 					}
-					// Count only up to gpuCount-1 fields as GPU connections
+					// Count only up to GpuCount-1 fields as GPU connections
 					gpuConnections++
 					if gpuConnections >= sanity.GpuCount-1 {
 						break
@@ -296,11 +300,11 @@ var _ = Describe("Sanity Checks", Label("pass-fail"), func() {
 			}
 		}
 		Expect(actual).NotTo(BeEmpty(), "model name not found in /proc/cpuinfo")
-		GinkgoWriter.Printf("CPU model: %s (expected: %s)\n", actual, sanity.CpuModel)
-		Expect(actual).To(Equal(sanity.CpuModel),
+		GinkgoWriter.Printf("CPU model: %s (expected: %s)\n", actual, sanity.ResourceNames.CpuModel)
+		Expect(actual).To(Equal(sanity.ResourceNames.CpuModel),
 			"CPU model mismatch: /proc/cpuinfo reports '%s' but the cluster config expects '%s'. "+
 				"This node may have been assigned the wrong spec in cluster.yaml, or the pod "+
-				"scheduled on the wrong node.", actual, sanity.CpuModel)
+				"scheduled on the wrong node.", actual, sanity.ResourceNames.CpuModel)
 	})
 
 	It("should report correct CPU count", func() {

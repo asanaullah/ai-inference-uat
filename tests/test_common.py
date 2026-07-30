@@ -536,7 +536,7 @@ class TestValidateNodeResources:
         return create_jinja_env("templates")
 
     def _node(self, **extra_sanity):
-        sanity = {"gpuCount": 4, **extra_sanity}
+        sanity = {"nvidia.com/gpu": 4, **extra_sanity}
         return NodeSpec(
             name="wrk-1",
             componentValidation={"sanity": sanity},

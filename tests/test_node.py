@@ -2,7 +2,7 @@ import pytest
 
 from src.common import create_jinja_env
 from src.models import LoadedTest, NodeSpec, TestSpec, ToolConfig
-from src.node import compute_node_steps, node_meets_requirements
+from src.node import compute_node_steps
 
 # -- Fixtures -----------------------------------------------------------------
 
@@ -21,18 +21,15 @@ TC_DATA = {
 def _node(gpu_count=4):
     return NodeSpec(
         name="wrk-1",
-        componentValidation={"sanity": {"gpuCount": gpu_count}},
+        componentValidation={"sanity": {"nvidia.com/gpu": gpu_count}},
     )
 
 
-def _test(
-    name="t", gpu=False, dag=None, on_failure="continue", timeout=None, test_id="1"
-):
+def _test(name="t", dag=None, on_failure="continue", timeout=None, test_id="1"):
     dag = dag or [{"name": "run", "image": "img", "labelFilter": "pass-fail"}]
     spec = TestSpec(
         source={"ginkgo": "t.go"},
         dag=dag,
-        requirements={"gpu": gpu},
     )
     return LoadedTest(
         name=name,
@@ -42,20 +39,6 @@ def _test(
         timeout=timeout,
         test_id=test_id,
     )
-
-
-# -- node_meets_requirements -------------------------------------------------
-
-
-class TestNodeMeetsRequirements:
-    def test_no_gpu_required(self):
-        assert node_meets_requirements(_test().spec.requirements, _node(0))
-
-    def test_gpu_required_has_gpu(self):
-        assert node_meets_requirements(_test(gpu=True).spec.requirements, _node(4))
-
-    def test_gpu_required_no_gpu(self):
-        assert not node_meets_requirements(_test(gpu=True).spec.requirements, _node(0))
 
 
 # -- compute_node_steps -------------------------------------------------------
@@ -84,18 +67,6 @@ class TestComputeNodeSteps:
         assert "1-t-wrk-1-run" in names
         assert "1-t-wrk-1-cleanup-run" in names
         assert "1-t-wrk-1-finally-teardown" in names
-
-    def test_skips_gpu_test(self, env, tc):
-        steps = compute_node_steps(
-            _node(0),
-            _test(gpu=True),
-            tc,
-            "ns",
-            "pvc",
-            "results",
-            env,
-        )
-        assert steps == []
 
     def test_persistent_generates_teardown(self, env, tc):
         dag = [

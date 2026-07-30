@@ -166,7 +166,7 @@ spec:
         setSelection: all
         setCutoff: 3
         setRequirements:
-          gpuCount: 4
+          nvidia.com/gpu: 4
 ```
 
 | Field | Default | Description |
@@ -320,9 +320,6 @@ metadata:
   version: v0.0.1
   description: Short description of what this test validates
 spec:
-  requirements:
-    gpu: true           # set to false if no GPU needed
-
   source:
     ginkgo: my-test.go
 
@@ -402,7 +399,7 @@ Available in `command`, `env`, and `resources` values via Jinja2:
 
 | Variable | Description |
 |---|---|
-| `nodeSpec.*` | Full node spec from cluster config (e.g. `{{ nodeSpec.componentValidation.sanity.gpuCount }}`) |
+| `nodeSpec.*` | Full node spec from cluster config (e.g. `{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}`) |
 | `serverConfig.*` | Test-level config dict (e.g. `{{ serverConfig.model }}`) |
 | `services["name"].url` | URL of a DAG step's service |
 | `paramSweep.id` | Current sweep entry ID |
@@ -507,8 +504,9 @@ spec:
     - name: wrk-4
       componentValidation:
         sanity:
-          gpuCount: 4
-          gpuModel: NVIDIA-A100-SXM4-40GB
+          nvidia.com/gpu: 4
+          resourceNames:
+            nvidia.com/gpu: NVIDIA-A100-SXM4-40GB
           # ... additional fields available as {{ nodeSpec.componentValidation.* }}
   namespace: my-namespace
   storage:
@@ -520,7 +518,7 @@ The `compliance` section holds cluster-wide settings consumed by Go test binarie
 
 The `name` field is the value matched against the `nodeSelectorKey` label (default: `kubernetes.io/hostname`). It is also used in step names for human readability. For Kubernetes resource names (pods, services, Tekton tasks), the generator sanitizes the node name: invalid characters are replaced with dashes, uppercase is lowercased, and names longer than 16 characters are truncated to 12 characters with a 4-character hash suffix. Short, simple names like `wrk-4` are used as-is; FQDN hostnames like `ip-10-0-1-42.ec2.internal` are automatically shortened.
 
-All fields under `componentValidation` are available in Jinja2 templates. The `sanity.gpuCount` field is used for GPU requirement checks — tests with `requirements.gpu: true` are skipped on nodes with `gpuCount <= 0`.
+All fields under `componentValidation` are available in Jinja2 templates. Resource keys in the sanity dict use actual Kubernetes resource names (e.g. `nvidia.com/gpu`, `cpu`, `memory`) so they match resource requests in DAG steps directly. The `resourceNames` sub-dict maps resource keys to hardware model names for component validation.
 
 ### Tool Config (`config.yaml`)
 
@@ -581,10 +579,13 @@ spec:
     - name: wrk-4
       componentValidation:
         sanity:
-          gpuCount: 4
-          gpuModel: NVIDIA-A100-SXM4-40GB    # custom field
+          nvidia.com/gpu: 4
+          cpu: 128
+          memory: 1007Gi
+          resourceNames:
+            nvidia.com/gpu: NVIDIA-A100-SXM4-40GB
+            cpu: Intel(R) Xeon(R) Platinum 8358
           nvlink: NV4                          # custom field
-          cpuCount: 128                        # custom field
 ```
 
 Use these in test definitions for resource requests, environment variables, or command flags:
@@ -592,10 +593,10 @@ Use these in test definitions for resource requests, environment variables, or c
 ```yaml
 resources:
   limits:
-    nvidia.com/gpu: '{{ nodeSpec.componentValidation.sanity.gpuCount }}'
+    nvidia.com/gpu: '{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}'
 env:
   - name: GPU_MODEL
-    value: '{{ nodeSpec.componentValidation.sanity.gpuModel }}'
+    value: '{{ nodeSpec.componentValidation.sanity.resourceNames["nvidia.com/gpu"] }}'
 ```
 
 ### Server Config
@@ -691,8 +692,6 @@ metadata:
   version: v0.0.1
   description: Low-level GPU diagnostics requiring host access
 spec:
-  requirements:
-    gpu: true
   source:
     ginkgo: gpu-diag.go
   dag:

@@ -101,7 +101,7 @@ The step list is built in three sections — setup, per-test, and teardown:
 
 Binaries are compiled once per test name and stored at `binaries/<test_name>/test.bin`, not per `test_id`. If the same test appears multiple times in `test_suite.yaml`, all instances share the same `<test>.go` source file — they differ only in runtime config (`onFailure`, `timeout`, sweep parameters), not in compiled code.
 
-**Spec override resolution:** Before step computation, `load_config()` in `common.py` loads each test definition from `<test>.yaml` in the test library. If a `TestEntry` in `test_suite.yaml` includes a `spec` section, it is deep-merged over the loaded test definition's `spec`. The merge is recursive for dict fields (`serverConfig`, `requirements`) — nested keys are merged, not replaced. For `dag` overrides, the suite entry uses DAG step names as dict keys (not a list): each key is matched to a DAG step by `name`, and only the specified fields within that step are overridden — unmentioned fields and unmentioned DAG steps retain their `<test>.yaml` defaults. After merging, the result is re-validated by constructing a new `TestSpec` from the merged dict — this catches invalid types, unknown fields, or malformed DAG step definitions introduced by the suite-level override. Without re-validation, such errors would only surface during step computation or manifest rendering with less clear error messages. The validated `TestSpec` becomes the `LoadedTest.spec` used for all subsequent step computation. This allows the same test definition in the test library to produce different runtime configurations across suite entries without duplicating the test file.
+**Spec override resolution:** Before step computation, `load_config()` in `common.py` loads each test definition from `<test>.yaml` in the test library. If a `TestEntry` in `test_suite.yaml` includes a `spec` section, it is deep-merged over the loaded test definition's `spec`. The merge is recursive for dict fields (`serverConfig`) — nested keys are merged, not replaced. For `dag` overrides, the suite entry uses DAG step names as dict keys (not a list): each key is matched to a DAG step by `name`, and only the specified fields within that step are overridden — unmentioned fields and unmentioned DAG steps retain their `<test>.yaml` defaults. After merging, the result is re-validated by constructing a new `TestSpec` from the merged dict — this catches invalid types, unknown fields, or malformed DAG step definitions introduced by the suite-level override. Without re-validation, such errors would only surface during step computation or manifest rendering with less clear error messages. The validated `TestSpec` becomes the `LoadedTest.spec` used for all subsequent step computation. This allows the same test definition in the test library to produce different runtime configurations across suite entries without duplicating the test file.
 
 **Test steps**: per-test, with scope determining the execution pattern. Each scope has its own step computation function. All step names follow the unified naming convention: `<test_id>-<test>-<node>-<dag_step.name>` for node scope, `<test_id>-<test>-set<i>-<dag_step.name>` for cluster scope with multiple sets, `<test_id>-<test>-<dag_step.name>` for cluster scope with a single set or project scope, with `-<id>` appended for sweep entries. `<test_id>` is the 1-indexed position of the test in the `test_suite.yaml` list (not zero-padded). The same test can appear multiple times in the list (e.g. with different configs or failure policies), so `<test_id>` prevents collisions in resource names and results paths, while `<test_name>` provides readability. The common pattern across scopes:
 
@@ -152,7 +152,7 @@ The `setMappings` metadata (recording which nodes are in each set, keyed by `tes
 **Resource validation:** Before step computation for each node-scoped or cluster-scoped test, the generator validates that each target node has sufficient resources for the test's peak concurrent demand. `validate_node_resources(test, node_spec, jinja_env)` in `common.py` performs the check:
 
 1. Builds a minimal Jinja2 render context: `{"nodeSpec": node_spec_dict, "serverConfig": test.spec.server_config}`.
-2. For each DAG step with `resources.requests`, renders each value through Jinja2 to resolve template expressions (e.g., `{{ nodeSpec.componentValidation.sanity.gpuCount }}` → `4`).
+2. For each DAG step with `resources.requests`, renders each value through Jinja2 to resolve template expressions (e.g., `{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}` → `4`).
 3. Classifies each DAG step as persistent (`persistsThroughSweep: true`) or ephemeral (default). Each ephemeral DAG step contributes one entry to the ephemeral demand list (sweep entries share the same resource requests, so they produce the same demand).
 4. Aggregates per resource type: `peak_demand = sum(persistent) + max(ephemeral)`. This represents the worst-case concurrent resource usage — all persistent resources are deployed simultaneously, plus the most resource-hungry ephemeral step.
 5. Looks up each Kubernetes resource type (e.g., `nvidia.com/gpu`) in the node's `componentValidation.sanity` dict (via `model_dump(by_alias=True)`). If the field exists and `peak_demand > capacity`, raises `ValueError` with the test name, node name, resource type, demand, and capacity. If the field doesn't exist for a resource type, that resource is not validated (capacity is unknown).
@@ -311,15 +311,14 @@ Every parsed config field and where it takes effect. **This is the section to ch
 | `spec.tests[].placement.setSelection` | `Placement.set_selection` | `all` generates every set of `setSize` nodes; `random` picks a single random set. Default: `random` |
 | `spec.tests[].placement.setRequirements` | `Placement.set_requirements` | Filters eligible nodes by `componentValidation.sanity` fields. Numeric fields are treated as minimums (node value must be ≥ required), string fields as exact matches. Default: empty (all nodes eligible) |
 | `spec.tests[].placement.setCutoff` | `Placement.set_cutoff` | Limits the number of sets that run. `0` means no limit. When `setCutoff > 0`, effective count is `min(setCutoff, numSets)`. Ignored when `setSelection` is `random`. Default: `1` |
-| `spec.tests[].spec` | `TestEntry.spec` | Optional deep-merge over the test definition's `spec` from `<test>.yaml`. Any field can be overridden, including `serverConfig`, `requirements`, and individual DAG step fields. For `dag` overrides, steps are referenced by name as dict keys and only specified fields are overridden — unmentioned fields retain their test.yaml defaults. For all other spec fields, the merge is recursive |
+| `spec.tests[].spec` | `TestEntry.spec` | Optional deep-merge over the test definition's `spec` from `<test>.yaml`. Any field can be overridden, including `serverConfig` and individual DAG step fields. For `dag` overrides, steps are referenced by name as dict keys and only specified fields are overridden — unmentioned fields retain their test.yaml defaults. For all other spec fields, the merge is recursive |
 
 ### ClusterTest (`cluster/<name>.yaml`)
 
 | Field | Model | Effect |
 |---|---|---|
 | `spec.nodes[].name` | `NodeSpec.name` | Node name for `nodeSelector` pinning and step name prefixing. A sanitized version (`NodeSpec.sanitized_name`) is computed at load time for Kubernetes resource names. |
-| `spec.nodes[].componentValidation.sanity.gpuCount` | `SanityCheck.gpu_count` | Determines GPU eligibility (> 0). Tests with `requirements.gpu: true` are skipped on nodes with `gpuCount <= 0` |
-| `spec.nodes[].componentValidation.sanity.*` | `SanityCheck` (extra="allow") | Fields matching Kubernetes resource names (e.g., `nvidia.com/gpu`, `memory`) are used for resource validation: the generator compares peak DAG step resource demands against these values. Non-resource fields (`gpuModel`, `nvlink`, etc.) are available for component validation checks and Jinja2 templates but are not used for resource validation |
+| `spec.nodes[].componentValidation.sanity.*` | `SanityCheck` (extra="allow") | Keys use actual Kubernetes resource names (e.g., `nvidia.com/gpu`, `cpu`, `memory`) for resource validation: the generator compares peak DAG step resource demands against these values. The `resourceNames` sub-dict maps resource keys to hardware model names. Non-resource fields (`nvlink`, `numaNodes`, etc.) are available for component validation checks and Jinja2 templates but are not used for resource validation |
 | `spec.nodes[].componentValidation.*` | `ComponentValidation` (extra="allow") | All fields available in Jinja2 templates as `{{ nodeSpec.componentValidation.* }}` |
 | `spec.compliance.*` | `ComplianceConfig` | Cluster-wide compliance settings. Consumed by Go test binaries via the embedded `cluster.yaml`, not by the harness itself |
 | `spec.namespace` | `ClusterTestSpec.namespace` | Kubernetes namespace for all generated resources |
@@ -330,7 +329,6 @@ Every parsed config field and where it takes effect. **This is the section to ch
 
 | Field | Model | Effect |
 |---|---|---|
-| `spec.requirements.gpu` | `TestRequirements.gpu` | If `true`, test is skipped on nodes with `gpuCount <= 0` |
 | `spec.source.ginkgo` | `TestSource` | Path (relative to test library dir) to the Ginkgo test file, read into `LoadedTest`. `go.mod` is generated at build time with the Ginkgo version from `config.yaml` |
 | `spec.dag[].persistsThroughSweep` | `DAGStep.persists_through_sweep` | `true`: rendered as generate + command (apply, wait-ready) pod (+ service); stays up for all sweep entries. `false`: rendered as generate + command (apply, poll-completed) pod; one per sweep entry |
 | `spec.dag[].service` | `DAGStep.service` | If `enabled: true`, generates a Service manifest and populates `{{ services["name"].url }}` in template context. `headless: true` (default) creates a headless Service (ClusterIP: None) |
@@ -338,7 +336,7 @@ Every parsed config field and where it takes effect. **This is the section to ch
 | `spec.dag[].labelFilter` | `DAGStep.label_filter` | If set, takes priority over `command`: generates a ginkgo command with `--ginkgo.label-filter=<value>` and `--ginkgo.junit-report=/workspace/junit.xml`. Also auto-injects `RESULTS_DIR` env var if not already present |
 | `spec.dag[].parameterSweep` | `DAGStep.parameter_sweep` | If set: one test pod per `entries[]`. Each entry's `flags` are merged over `baseCommand.flags`. If null: single test pod using the step's own command |
 | `spec.dag[].env` | `DAGStep.env` | Env vars. Values are rendered through Jinja2 with the full template context |
-| `spec.dag[].resources` | `DAGStep.resources` | Resource requests/limits. Values are rendered through Jinja2 with the full template context (`nodeSpec`, `serverConfig`, `services`, `node`, `timestamp`), so expressions like `{{ nodeSpec.componentValidation.sanity.gpuCount }}` work in both persistent and non-persistent steps. |
+| `spec.dag[].resources` | `DAGStep.resources` | Resource requests/limits. Values are rendered through Jinja2 with the full template context (`nodeSpec`, `serverConfig`, `services`, `node`, `timestamp`), so expressions like `{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}` work in both persistent and non-persistent steps. |
 | `spec.dag[].volumeMounts` | `DAGStep.volume_mounts` | Extra volume mounts added to the container. Must pair with `volumes` entries |
 | `spec.dag[].volumes` | `DAGStep.volumes` | Raw volume definitions (list of dicts). Rendered as-is via `to_yaml` filter. For test pods, these are in addition to the hardcoded PVC volume |
 | `spec.dag[].ports` | `DAGStep.ports` | Container ports |
@@ -530,7 +528,7 @@ Available in test YAML Jinja2 expressions (`command`, `env` values):
 | `serverConfig.*` | `spec.serverConfig` from test YAML | `{{ serverConfig.model }}` |
 | `paramSweep.id` | Sweep entry `id` or DAG step `name` (ephemeral steps only) | `short-burst` |
 | `paramSweep.command` | Resolved sweep command list (ephemeral steps only, only present for sweep entries) | Used with `\| toJson` |
-| `nodeSpec.*` | Full node spec from cluster config | `{{ nodeSpec.componentValidation.sanity.gpuCount }}` |
+| `nodeSpec.*` | Full node spec from cluster config | `{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}` |
 | `services["name"]` | Service context from DAG steps with `service.enabled` | `{{ services["vllm-server"].url }}` |
 | `timestamp` | `__TIMESTAMP__` placeholder | Replaced at output time |
 | `node` | Node name | `wrk-4` |
@@ -628,23 +626,21 @@ main()
 | Model | YAML source | Key fields |
 |---|---|---|
 | `TestSuite` | `test_suite.yaml` | `spec.tests[]` — ordered list of `TestEntry` (name, scope, onFailure, timeout, placement, spec) |
-| `Test` | `<test>.yaml` | `spec.dag[]`, `spec.source`, `spec.serverConfig`, `spec.requirements` |
+| `Test` | `<test>.yaml` | `spec.dag[]`, `spec.source`, `spec.serverConfig` |
 | `DAGStep` | nested in `Test` | `name`, `image`, `command`, `env`, `service`, `ports`, `readinessProbe`, `resources`, `volumeMounts`, `volumes`, `privileged`, `persistsThroughSweep`, `parameterSweep`, `labelFilter` |
 | `ParameterSweep` | nested in `DAGStep` | `baseCommand.{args,flags}`, `entries[].{id,description,flags}` |
 | `ClusterTest` | `cluster/*.yaml` | `spec.nodes[]`, `spec.namespace`, `spec.storage.{pvc,basePath}`, `spec.compliance` |
-| `NodeSpec` | nested in `ClusterTest` | `name`, `componentValidation.sanity.gpuCount` (typed), all others via `extra="allow"` |
+| `NodeSpec` | nested in `ClusterTest` | `name`, `componentValidation.sanity.*` (all via `extra="allow"`, keys use K8s resource names) |
 | `ToolConfig` | `config.yaml` | `oseCLIImage`, `builderImage`, `ginkgoVersion`, `aggregatorImage`, `configmapName`, `builderPodName`, `aggregatorPodName`, `nodeSelectorKey`, `managedByLabel`, `builderTimeout`, `aggregatorTimeout`, `deployTimeout`, `defaultTestTimeout`, `pipelineTimeout`, `finallyTimeout` |
 | `LoadedTest` | (dataclass) | `name`, `spec: TestSpec`, `go_source`, `on_failure`, `timeout`, `test_id`, `scope`, `placement` |
 | `Step` | (dataclass) | `name`, `type` (`generate` or `command`), `config` (type-specific: `output`/`command`/`probe`/`timeout`), `content` (generate only), `source` (command only, list of generate step names), `resource_name` (sanitized name for Kubernetes resources; equals `name` when already RFC 1123 compliant), `node` (node name, empty for global steps), `test` (test name, empty for setup/teardown), `test_id` (1-indexed position in test suite, empty for setup/teardown), `on_failure` (test policy: `continue`/`skipTest`/`abort`, empty for setup/teardown), `finally_step` (if `true` and no `test`: placed in cluster pipeline `finally` block; if `true` and has `test`: rendered as regular task with no `when` guard), `lifecycle` (`true` for cleanup, teardown, and finally-teardown steps — no `when` guards, excluded from guard task status checks), `scope`, `phase` |
 | `StepsFile` | `steps.json` | `metadata` (must contain `toolConfig`, `clusterSpec`, and `setMappings` for cluster-scoped tests recording which nodes are in each set keyed by `test_id`), `steps[]` — flat list of serialized steps. Validated on load: step structure, source references, pod name uniqueness, and failure policy labels |
 
-## Resource Requirement Checks and Test Skipping
+## Resource Validation
 
-Two levels of validation determine whether a test can run on a given node:
+For node-scoped and cluster-scoped tests, `validate_node_resources` in `common.py` computes peak concurrent resource demand per target node (sum of persistent + max of ephemeral DAG step resource requests) and compares against the node's `componentValidation.sanity` fields. Sanity dict keys use actual Kubernetes resource names (e.g. `nvidia.com/gpu`, `cpu`, `memory`) so they match resource requests directly. The generator aborts with an error if any resource type demand exceeds the node's declared capacity. This catches over-subscription (e.g., two GPU-hungry DAG steps on a 4-GPU node) at generation time. Project-scoped tests skip this check — pods have no specific target nodes.
 
-**Boolean requirements check** (`node_meets_requirements` in `node.py`): checks each test's `requirements` against the node spec. If a test requires `gpu: true` but the node has `gpuCount <= 0`, the test is skipped on that node. If ALL tests are skipped for a node, no tasks are generated for that node. This check applies to node scope only — it's a quick eligibility filter, not a quantitative resource check.
-
-**Quantitative resource validation** (`validate_node_resources` in `common.py`): for node-scoped and cluster-scoped tests, computes peak concurrent resource demand per target node (sum of persistent + max of ephemeral DAG step resource requests) and compares against the node's `componentValidation.sanity` fields. The generator aborts with an error if any Kubernetes resource type demand exceeds the node's declared capacity. This catches over-subscription (e.g., two GPU-hungry DAG steps on a 4-GPU node) at generation time. Project-scoped tests skip this check — pods have no specific target nodes.
+For cluster-scoped tests, `setRequirements` in the placement config filters nodes by comparing requirement values against the sanity dict. Numeric values check `>=`, string values check exact match.
 
 ## Known Constraints
 

@@ -6,10 +6,6 @@ metadata:
   version: v0.0.1
   description: Basic vLLM inference server validation with guidellm benchmarking
 spec:
-  requirements:
-    gpu: true
-
-  # Test source
   source:
     ginkgo: inference.go
 

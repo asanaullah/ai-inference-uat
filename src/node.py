@@ -9,12 +9,6 @@ from .common import add_ephemeral_steps, add_persistent_steps, add_teardown_step
 from .models import LoadedTest, NodeSpec, Step, ToolConfig
 
 
-def node_meets_requirements(requirements: Any, node_spec: NodeSpec) -> bool:
-    return not (
-        requirements.gpu and node_spec.component_validation.sanity.gpu_count <= 0
-    )
-
-
 def compute_node_steps(
     node_spec: NodeSpec,
     test: LoadedTest,
@@ -28,10 +22,6 @@ def compute_node_steps(
     node = node_spec.name
     safe_node = node_spec.sanitized_name or node
     node_spec_dict = node_spec.model_dump(by_alias=True)
-
-    if not node_meets_requirements(test.spec.requirements, node_spec):
-        print(f"  Skipping {test.name} on {node} (requirements not met)")
-        return steps
 
     services: dict[str, dict[str, Any]] = {}
     has_persistent = False

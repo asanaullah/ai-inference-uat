@@ -29,7 +29,7 @@ TC_DATA = {
 }
 
 CS_DATA = {
-    "nodes": [{"name": "n", "componentValidation": {"sanity": {"gpuCount": 1}}}],
+    "nodes": [{"name": "n", "componentValidation": {"sanity": {"nvidia.com/gpu": 1}}}],
     "namespace": "ns",
     "storage": {"pvc": "pvc", "basePath": "results"},
 }

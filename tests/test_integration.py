@@ -151,14 +151,20 @@ class TestStepsRoundTrip:
             check=True,
             capture_output=True,
         )
+        orig_base = build_dir / "manual"
+        rt_base = rt_dir / "manual"
         orig_files = sorted(
-            f.relative_to(build_dir / "manual")
-            for f in (build_dir / "manual").rglob("*")
-            if f.is_file()
+            f.relative_to(orig_base) for f in orig_base.rglob("*") if f.is_file()
         )
         rt_files = sorted(
-            f.relative_to(rt_dir / "manual")
-            for f in (rt_dir / "manual").rglob("*")
-            if f.is_file()
+            f.relative_to(rt_base) for f in rt_base.rglob("*") if f.is_file()
         )
-        assert orig_files == rt_files
+        assert orig_files == rt_files, (
+            f"File list mismatch:\n"
+            f"  only in original: {set(orig_files) - set(rt_files)}\n"
+            f"  only in roundtrip: {set(rt_files) - set(orig_files)}"
+        )
+        for rel in orig_files:
+            orig_content = (orig_base / rel).read_bytes()
+            rt_content = (rt_base / rel).read_bytes()
+            assert orig_content == rt_content, f"{rel} differs after round-trip"

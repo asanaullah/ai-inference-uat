@@ -11,14 +11,15 @@ spec:
     - name: wrk-6
       componentValidation:
         sanity:
-          gpuCount: 4
-          gpuModel: NVIDIA-H100-80GB-HBM3
+          nvidia.com/gpu: 4
+          cpu: 192
+          resourceNames:
+            nvidia.com/gpu: NVIDIA-H100-80GB-HBM3
+            cpu: AMD EPYC 9754 128-Core Processor
           nvlink: NV6
           nvlinkTopology: all-to-all
           pcieWidth: 16
           pcieGen: 5
-          cpuModel: AMD EPYC 9754 128-Core Processor
-          cpuCount: 192
           memory: 1512Gi
           numaNodes: 2
         ideal:
@@ -37,14 +38,15 @@ spec:
     - name: wrk-4
       componentValidation:
         sanity:
-          gpuCount: 2
-          gpuModel: NVIDIA-A100-SXM4-40GB
+          nvidia.com/gpu: 2
+          cpu: 128
+          resourceNames:
+            nvidia.com/gpu: NVIDIA-A100-SXM4-40GB
+            cpu: Intel(R) Xeon(R) Platinum 8358 CPU @ 2.60GHz
           nvlink: NV4
           nvlinkTopology: all-to-all
           pcieWidth: 16
           pcieGen: 4
-          cpuModel: Intel(R) Xeon(R) Platinum 8358 CPU @ 2.60GHz
-          cpuCount: 128
           memory: 1007Gi
           numaNodes: 2
         ideal:

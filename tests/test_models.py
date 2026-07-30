@@ -30,7 +30,7 @@ CLUSTER_SPEC_DATA = {
     "nodes": [
         {
             "name": "wrk-1",
-            "componentValidation": {"sanity": {"gpuCount": 4}},
+            "componentValidation": {"sanity": {"nvidia.com/gpu": 4}},
         }
     ],
     "namespace": "ns",
@@ -131,19 +131,21 @@ class TestClusterTest:
         ct = ClusterTest(spec=CLUSTER_SPEC_DATA)
         assert ct.spec.namespace == "ns"
         assert ct.spec.nodes[0].name == "wrk-1"
-        assert ct.spec.nodes[0].component_validation.sanity.gpu_count == 4
+        sanity = ct.spec.nodes[0].component_validation.sanity.model_dump()
+        assert sanity["nvidia.com/gpu"] == 4
 
     def test_extra_fields_allowed(self):
         node_data = {
             "name": "n",
             "componentValidation": {
-                "sanity": {"gpuCount": 2, "gpuModel": "A100"},
+                "sanity": {"nvidia.com/gpu": 2, "gpuModel": "A100"},
                 "custom": "value",
             },
         }
         ns = NodeSpec(**node_data)
-        assert ns.component_validation.sanity.gpu_count == 2
-        assert ns.component_validation.sanity.model_extra["gpuModel"] == "A100"
+        sanity = ns.component_validation.sanity.model_dump()
+        assert sanity["nvidia.com/gpu"] == 2
+        assert sanity["gpuModel"] == "A100"
 
 
 # -- Test / DAGStep -----------------------------------------------------------
@@ -158,7 +160,6 @@ class TestTestDefinition:
             }
         )
         assert t.spec.dag[0].name == "run"
-        assert t.spec.requirements.gpu is False
 
     def test_dag_defaults(self):
         d = _dag_step()

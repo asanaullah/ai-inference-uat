@@ -18,7 +18,7 @@ TC_DATA = {
 
 
 def _node(name="wrk-1", gpu_count=4, **extra_sanity):
-    sanity = {"gpuCount": gpu_count, **extra_sanity}
+    sanity = {"nvidia.com/gpu": gpu_count, **extra_sanity}
     return NodeSpec(
         name=name,
         componentValidation={"sanity": sanity},
@@ -57,7 +57,7 @@ class TestFilterNodes:
 
     def test_numeric_minimum(self):
         nodes = [_node("a", gpu_count=4), _node("b", gpu_count=2)]
-        result = _filter_nodes(nodes, {"gpuCount": 4})
+        result = _filter_nodes(nodes, {"nvidia.com/gpu": 4})
         assert len(result) == 1
         assert result[0].name == "a"
 
@@ -187,7 +187,7 @@ class TestComputeClusterSteps:
 
     def test_no_eligible_nodes_returns_empty(self, env, tc):
         nodes = [_node("wrk-1", gpu_count=0)]
-        placement = Placement(setRequirements={"gpuCount": 4})
+        placement = Placement(setRequirements={"nvidia.com/gpu": 4})
         steps, mappings = compute_cluster_steps(
             _test(placement=placement), tc, "ns", "pvc", "results", env, nodes=nodes
         )
