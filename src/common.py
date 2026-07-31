@@ -291,7 +291,10 @@ def load_config(
 def build_command(args: list[str], flags: dict[str, Any]) -> list[str]:
     cmd = list(args)
     for key, value in flags.items():
-        cmd.append(f"--{key}={value}")
+        if value is None:
+            cmd.append(f"--{key}")
+        else:
+            cmd.append(f"--{key}={value}")
     return cmd
 
 

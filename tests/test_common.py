@@ -149,6 +149,20 @@ class TestBuildCommand:
             "--verbose=True",
         ]
 
+    def test_bare_flags(self):
+        assert build_command(["server"], {"enable-feature": None, "port": 8000}) == [
+            "server",
+            "--enable-feature",
+            "--port=8000",
+        ]
+
+    def test_bare_flags_only(self):
+        assert build_command(["cmd"], {"a": None, "b": None}) == [
+            "cmd",
+            "--a",
+            "--b",
+        ]
+
     def test_empty(self):
         assert build_command([], {}) == []
 
