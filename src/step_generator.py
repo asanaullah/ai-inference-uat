@@ -220,7 +220,7 @@ def compute_teardown_steps(
                 "command": "exec",
                 "probe": "none",
                 "target": tc.aggregator_pod_name,
-                "args": ["python", "/src/aggregate.py", "/workspace"],
+                "args": ["python", "/src/aggregate.py", "/uat_workspace"],
             },
             finally_step=True,
             phase="teardown",
@@ -356,6 +356,7 @@ def generate_steps(
     for test in tests:
         print(f"Processing test: {test.name} (scope: {test.scope})")
         try:
+            models_storage = cs.storage.models if cs.storage.models.pvc else None
             if test.scope == "node":
                 for node_spec in cs.nodes:
                     validate_node_resources(test, node_spec, jinja_env)
@@ -367,6 +368,7 @@ def generate_steps(
                         cs.storage.pvc,
                         cs.storage.base_path,
                         jinja_env,
+                        models_storage=models_storage,
                     )
                     test_steps.extend(steps)
             elif test.scope == "cluster":
@@ -378,6 +380,7 @@ def generate_steps(
                     cs.storage.base_path,
                     jinja_env,
                     nodes=cs.nodes,
+                    models_storage=models_storage,
                 )
                 test_steps.extend(cluster_steps)
                 if set_mappings:
@@ -391,6 +394,7 @@ def generate_steps(
                         cs.storage.pvc,
                         cs.storage.base_path,
                         jinja_env,
+                        models_storage=models_storage,
                     )
                 )
         except (ValueError, TypeError, TemplateError) as e:

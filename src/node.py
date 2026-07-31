@@ -6,7 +6,7 @@ from typing import Any
 from jinja2 import Environment
 
 from .common import add_ephemeral_steps, add_persistent_steps, add_teardown_steps
-from .models import LoadedTest, NodeSpec, Step, ToolConfig
+from .models import LoadedTest, ModelsStorageConfig, NodeSpec, Step, ToolConfig
 
 
 def compute_node_steps(
@@ -17,6 +17,7 @@ def compute_node_steps(
     pvc: str,
     base_path: str,
     jinja_env: Environment,
+    models_storage: ModelsStorageConfig | None = None,
 ) -> list[Step]:
     steps: list[Step] = []
     node = node_spec.name
@@ -48,6 +49,7 @@ def compute_node_steps(
                 jinja_env=jinja_env,
                 scope="node",
                 node_spec_dict=node_spec_dict,
+                models_storage=models_storage,
             )
         else:
             add_ephemeral_steps(
@@ -67,6 +69,7 @@ def compute_node_steps(
                 scope="node",
                 selector_extra=f",node={node}",
                 node_spec_dict=node_spec_dict,
+                models_storage=models_storage,
             )
 
     add_teardown_steps(

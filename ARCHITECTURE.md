@@ -19,7 +19,7 @@ Each step carries its test's failure policy from `test_suite.yaml`, set during c
 
 The generator takes three inputs: a **test suite** (`test_suite.yaml`) that defines which tests to run and in what order, a **test library** (a directory of `<test>.yaml` and `<test>.go` files) that contains the reusable test definitions, and a **cluster config** that provides the target nodes, storage, and namespace. Each node in the cluster config declares hardware characteristics under `componentValidation.sanity`. For any resource type that DAG steps request (e.g., `nvidia.com/gpu`, `memory`), the sanity section should include a field with the matching Kubernetes resource name and the node's schedulable capacity — these are used for resource validation during generation (see [Generation](#generation)). The suite/library separation allows multiple suites to reference the same library with different configurations. Adding a test to the suite requires three things:
 
-1. **An entry in `test_suite.yaml`** — the suite-level manifest that lists tests in execution order. Each entry specifies the test name, scope (`node`, `cluster`, or `project`), what to do on failure, and an optional per-test timeout. Test definitions in the test library are scope-agnostic — the same test can appear with different scopes across entries or suites. For cluster-scoped entries, a `placement` section controls how pods are distributed across nodes. Entries can also include a `spec` section that deep-merges over the test definition's `spec` from `<test>.yaml` — any field can be overridden, including serverConfig and individual DAG step fields (matched by step name). This allows the same test definition in the test library to be reused with different configurations across suites. Storage settings (PVC, base path) live in the cluster config. Default timeouts and tool images live in `config.yaml`.
+1. **An entry in `test_suite.yaml`** — the suite-level manifest that lists tests in execution order. Each entry specifies the test name, scope (`node`, `cluster`, or `project`), what to do on failure, and an optional per-test timeout. Test definitions in the test library are scope-agnostic — the same test can appear with different scopes across entries or suites. For cluster-scoped entries, a `placement` section controls how pods are distributed across nodes. Entries can also include a `spec` section that deep-merges over the test definition's `spec` from `<test>.yaml` — any field can be overridden, including serverConfig and individual DAG step fields (matched by step name). This allows the same test definition in the test library to be reused with different configurations across suites. Storage settings (PVC, base path, optional models storage) live in the cluster config. Default timeouts and tool images live in `config.yaml`.
 
    ```yaml
    spec:
@@ -28,7 +28,7 @@ The generator takes three inputs: a **test suite** (`test_suite.yaml`) that defi
          scope: node
          onFailure: continue
 
-       - name: inference
+       - name: guidellm
          scope: node
          onFailure: abort
          timeout: 1200
@@ -70,7 +70,7 @@ The generator takes three inputs: a **test suite** (`test_suite.yaml`) that defi
    The optional `spec` section deep-merges over the test definition's `spec`. For `dag` overrides, steps are referenced by name as dict keys (not a list) and only the specified fields are overridden — unmentioned fields retain their test.yaml defaults. For all other spec fields (`serverConfig`), the merge is recursive.
 
 2. **`<test>.yaml`** (in the test library) — the test definition containing:
-   - **DAG**: ordered resource graph (e.g. deploy a vLLM server, then run a test pod). Each vertex declares its image, command, env, ports, probes, resources, volume mounts, an optional service, and whether it persists through the parameter sweep or runs once per sweep iteration. Vertices may also specify a Ginkgo label filter (as an alternative to an explicit command), privileged mode, and extra volumes. Non-persistent steps may include a `parameterSweep` — a base command and a list of named entries, each with an `id`, `description`, and `flags` that are merged over the base command's flags. The generator produces a separate test pod for each sweep entry.
+   - **DAG**: ordered resource graph (e.g. deploy a vLLM server, then run a test pod). Each vertex declares its image, command, env, ports, probes, resources, volume mounts, an optional service, and whether it persists through the parameter sweep or runs once per sweep iteration. `persistsThroughSweep` and `parameterSweep` are mutually exclusive — a persistent step cannot have its own sweep (it stays up while ephemeral sweep pods run against it). Vertices may also specify a Ginkgo label filter (as an alternative to an explicit command), privileged mode, and extra volumes. Non-persistent steps may include a `parameterSweep` — a base command and a list of named entries, each with an `id`, `description`, and `flags` that are merged over the base command's flags. The generator produces a separate test pod for each sweep entry.
    - **Server config**: template variables substituted into DAG commands (model name, memory settings, etc.).
 
 3. **`<test>.go`** (in the test library) — a Ginkgo test file implementing the test logic. A single compiled binary handles all parameter sweep entries — each sweep entry runs as a separate pod with per-entry command flags and workspace directory.
@@ -109,10 +109,10 @@ build/
 │   │   ├── create-builder.yaml                          ← setup manifest
 │   │   ├── 1-component-wrk-4-test-runner.yaml           ← test manifest
 │   │   ├── 1-component-wrk-6-test-runner.yaml
-│   │   ├── 2-inference-wrk-4-vllm-server.yaml           ← persistent DAG manifest
-│   │   ├── 2-inference-wrk-6-vllm-server.yaml
-│   │   ├── 2-inference-wrk-4-pass-fail.yaml             ← sweep entry manifest
-│   │   ├── 2-inference-wrk-6-pass-fail.yaml
+│   │   ├── 2-guidellm-wrk-4-vllm-server.yaml            ← persistent DAG manifest
+│   │   ├── 2-guidellm-wrk-6-vllm-server.yaml
+│   │   ├── 2-guidellm-wrk-4-pass-fail.yaml              ← sweep entry manifest
+│   │   ├── 2-guidellm-wrk-6-pass-fail.yaml
 │   │   ├── ...
 │   │   └── create-aggregator.yaml                       ← teardown manifest
 │   ├── 01-apply-configmap.sh                            ← apply script
@@ -121,10 +121,10 @@ build/
 │   ├── 04-1-component-wrk-4-test-runner.sh              ← apply script (parallel nodes share counter)
 │   ├── 04-1-component-wrk-6-test-runner.sh
 │   ├── ...
-│   ├── 07-2-inference-wrk-4-vllm-server.sh              ← apply script
-│   ├── 07-2-inference-wrk-6-vllm-server.sh
-│   ├── 08-2-inference-wrk-4-pass-fail.sh                ← apply script
-│   ├── 08-2-inference-wrk-6-pass-fail.sh
+│   ├── 07-2-guidellm-wrk-4-vllm-server.sh               ← apply script
+│   ├── 07-2-guidellm-wrk-6-vllm-server.sh
+│   ├── 08-2-guidellm-wrk-4-pass-fail.sh                 ← apply script
+│   ├── 08-2-guidellm-wrk-6-pass-fail.sh
 │   ├── ...
 │   ├── NN-create-aggregator.sh                          ← apply script
 │   ├── N-aggregate.sh                                   ← exec script
@@ -154,9 +154,9 @@ apply-configmap → create-builder → build → [test task chains] → finally:
 
 **1. Apply ConfigMap** — creates a ConfigMap containing all Go source, cluster config, test suite config, build script, and aggregator script.
 
-**2. Create builder pod** — a long-lived Go toolchain pod with the PVC mounted at `/workspace` and the ConfigMap mounted at `/src/`.
+**2. Create builder pod** — a long-lived Go toolchain pod with the PVC mounted at `/uat_workspace` and the ConfigMap mounted at `/src/`.
 
-**3. Build binaries** — copies source from ConfigMap mounts into the PVC, generates a `go.mod` with the Ginkgo version pinned in `config.yaml`, and compiles one Ginkgo binary per unique test name at `/workspace/<test>/test.bin`. If the same test name appears multiple times in `test_suite.yaml` (e.g. with different failure policies), all instances share the same binary.
+**3. Build binaries** — copies source from ConfigMap mounts into the PVC, generates a `go.mod` with the Ginkgo version pinned in `config.yaml`, and compiles one Ginkgo binary per unique test name at `/uat_workspace/<test>/test.bin`. If the same test name appears multiple times in `test_suite.yaml` (e.g. with different failure policies), all instances share the same binary.
 
 **4. Tests** — each test's tasks are placed directly in the cluster pipeline as individual `taskRef` entries. Scope determines the shape:
 
@@ -307,15 +307,15 @@ All scopes produce the same `Step` format. Placement is fully resolved during st
 
 ```
 node-scoped chain (one of N parallel chains):
-  2-inference-wrk-4-vllm-server                          [persistent deploy]
-    → 2-inference-wrk-4-pass-fail                         [ephemeral run]
-    → 2-inference-wrk-4-cleanup-pass-fail                 [per-ephemeral cleanup]
-    → 2-inference-wrk-4-sweep-short-burst                 [ephemeral run (sweep entry)]
-    → 2-inference-wrk-4-cleanup-sweep-short-burst         [per-ephemeral cleanup]
-    → 2-inference-wrk-4-sweep-sustained-load              [ephemeral run (sweep entry)]
-    → 2-inference-wrk-4-cleanup-sweep-sustained-load      [per-ephemeral cleanup]
-    → 2-inference-wrk-4-teardown                          [teardown]
-    → 2-inference-wrk-4-finally-teardown                  [finally-teardown, no when guard]
+  2-guidellm-wrk-4-vllm-server                          [persistent deploy]
+    → 2-guidellm-wrk-4-pass-fail                         [ephemeral run]
+    → 2-guidellm-wrk-4-cleanup-pass-fail                 [per-ephemeral cleanup]
+    → 2-guidellm-wrk-4-sweep-short-burst                 [ephemeral run (sweep entry)]
+    → 2-guidellm-wrk-4-cleanup-sweep-short-burst         [per-ephemeral cleanup]
+    → 2-guidellm-wrk-4-sweep-sustained-load              [ephemeral run (sweep entry)]
+    → 2-guidellm-wrk-4-cleanup-sweep-sustained-load      [per-ephemeral cleanup]
+    → 2-guidellm-wrk-4-teardown                          [teardown]
+    → 2-guidellm-wrk-4-finally-teardown                  [finally-teardown, no when guard]
 
 cluster-scoped chains (setSize: 2, setSelection: all — sequential):
   set0: 3-network-set0-iperf-server                       [persistent deploy]
@@ -344,21 +344,21 @@ Each test run writes JUnit XML and benchmark output to the PVC in a flat directo
 <base-path>/<pipeline-run-name>/
 ├── binaries/
 │   ├── component/test.bin
-│   └── inference/test.bin
+│   └── guidellm/test.bin
 ├── 1-component-wrk-4-test-runner/
 │   └── junit.xml
 ├── 1-component-wrk-6-test-runner/
 │   └── junit.xml
-├── 2-inference-wrk-4-vllm-server/             # persistent DAG pod workspace
-├── 2-inference-wrk-4-pass-fail/
+├── 2-guidellm-wrk-4-vllm-server/             # persistent DAG pod workspace
+├── 2-guidellm-wrk-4-pass-fail/
 │   └── junit.xml
-├── 2-inference-wrk-4-sweep-short-burst/
+├── 2-guidellm-wrk-4-sweep-short-burst/
 │   ├── junit.xml
 │   └── results.json
-├── 2-inference-wrk-4-sweep-sustained-load/
+├── 2-guidellm-wrk-4-sweep-sustained-load/
 │   └── junit.xml
-├── 2-inference-wrk-6-vllm-server/
-├── 2-inference-wrk-6-pass-fail/
+├── 2-guidellm-wrk-6-vllm-server/
+├── 2-guidellm-wrk-6-pass-fail/
 │   └── junit.xml
 ├── ...
 ├── 3-network-set0-iperf-server/                # cluster-scoped, set 0
@@ -374,7 +374,24 @@ Each test run writes JUnit XML and benchmark output to the PVC in a flat directo
     └── summary.json
 ```
 
-The base path is a cluster-level setting that scopes results to a particular test suite or environment (e.g. `uat/results`). The pipeline run name provides timestamp-based isolation between runs. Each step gets a flat directory named after its step name, which encodes the test index, test name, node (for node-scoped tests) or set index (for cluster-scoped multi-set tests), and DAG step for uniqueness and readability. Test pods write to `/workspace` and files land in the right place via Kubernetes `subPath` mounting. The aggregator scans for `junit.xml` files across all step directories and writes a consolidated summary to `report/`.
+The base path is a cluster-level setting that scopes results to a particular test suite or environment (e.g. `uat/results`). The pipeline run name provides timestamp-based isolation between runs. Each step gets a flat directory named after its step name, which encodes the test index, test name, node (for node-scoped tests) or set index (for cluster-scoped multi-set tests), and DAG step for uniqueness and readability. Test pods write to `/uat_workspace` and files land in the right place via Kubernetes `subPath` mounting.
+
+### Aggregation
+
+The aggregator pod runs `scripts/aggregate.py` (deployed via the ConfigMap) against the results directory. It walks all step directories, skipping `binaries/` and `report/`, and parses each `junit.xml` file to extract `tests`, `failures`, `errors`, and `skipped` counts. Each directory produces a per-entry result with a `passed`/`failed` status (failed if any failures or errors). The aggregator writes `report/summary.json` with this structure:
+
+```json
+{
+  "status": "passed",
+  "totals": {"tests": 42, "failures": 0, "errors": 0, "skipped": 2},
+  "entries": [
+    {"name": "1-component-wrk-4-test-runner", "tests": 12, "failures": 0, "errors": 0, "skipped": 0, "status": "passed"},
+    ...
+  ]
+}
+```
+
+The top-level `status` is `"failed"` if any entry has failures or errors, `"passed"` otherwise. The summary is also printed to stdout for operator visibility.
 
 ## Design Decisions
 
@@ -386,6 +403,7 @@ The base path is a cluster-level setting that scopes results to a particular tes
 | Placement is step computation, not writer logic | All scopes resolve placement during step computation — nodeSelectors and labels are baked into the rendered manifest content. The resulting step list uses the same `Step` format across all scopes. Writers use step metadata (scope, chain keys) to determine execution ordering. |
 | One binary per test, not per parameter | Same test logic, different runtime config. Avoids redundant compilation. |
 | ConfigMap → Builder Pod → PVC | A single ConfigMap delivers all Go source to the builder pod. Builder pod provides a persistent compilation environment. PVC makes binaries accessible to any test container. Delivery mechanism is swappable (GitHub pull, custom image) without changing the rest of the pipeline. |
+| Separate models storage | Model weights live on a dedicated volume (`storage.models`) rather than the results PVC. This keeps large model files (tens of GB) out of the per-run results directory, allows a single pre-populated cache to be shared across runs, and lets inference servers load weights from `/models` without downloading at runtime. The models volume is mounted read-only on all DAG pods when configured. The `ModelsStorageConfig` is its own model so the backing store can be extended beyond PVC (e.g. object storage) without changing `StorageConfig`. |
 | DAG resources persist through sweep | Expensive resources (GPU-backed servers) deploy once; the parameter sweep reuses them. |
 | One Tekton task per DAG step | Each non-persistent step gets its own task (not one per test). Sweep iterations each get a separate test pod and task, keeping the Tekton task graph explicit. |
 | Resource validation at generation time | Before step computation, the generator validates that each target node has sufficient resources for the test's peak concurrent demand (sum of persistent + max ephemeral). Uses `componentValidation.sanity` fields as the capacity source — any field whose name matches a Kubernetes resource type (e.g., `nvidia.com/gpu`) is compared against the rendered DAG step resource requests. Catches over-subscription at generation time rather than producing manifests that fail to schedule. |
@@ -396,7 +414,7 @@ The base path is a cluster-level setting that scopes results to a particular tes
 ## Constraints
 
 - **ConfigMap 1MB limit**: all Go source, cluster config, test suite config, build script, and aggregator script are packed into a single ConfigMap. A project with many tests may exceed Kubernetes' 1MB ConfigMap limit.
-- **Resource name length**: resource names are constructed by concatenating test_id, test name, node or set segment, and DAG step (e.g. `2-inference-wrk-4-vllm-server`, `3-network-set0-iperf-server`). Node names are capped at 16 characters (12 + 4-char hash if longer), but the full resource name can still exceed the 63-character Kubernetes name limit with long test or DAG step names.
+- **Resource name length**: resource names are constructed by concatenating test_id, test name, node or set segment, and DAG step (e.g. `2-guidellm-wrk-4-vllm-server`, `3-network-set0-iperf-server`). Node names are capped at 16 characters (12 + 4-char hash if longer), but the full resource name can still exceed the 63-character Kubernetes name limit with long test or DAG step names.
 - **One cluster pipeline per namespace**: the builder pod has a fixed name, so only one cluster pipeline can run at a time in a given namespace. This is typically sufficient — the task chains are the element that scales with cluster size, and a single cluster pipeline fans out to all target nodes in parallel.
 - **Sequential sweeps**: parameter sweep entries within a test run as separate pods in sequence. Failure behavior is controlled per-test via the `onFailure` field in `test_suite.yaml` (`continue`, `skipTest`, or `abort`). All three policies produce a guard task between tests. `continue` uses no `when` guards, so all tasks run through failures. `skipTest` adds `when` guards that skip remaining test tasks in the chain after a failure. Both use `onError: continue` on the guard task, so the next test always proceeds. `abort` uses the same `when` guards as `skipTest`, but the guard task uses `onError: stopAndFail` — halting the pipeline if any chain had a failure. In manual mode, scripts are independent and the operator controls whether to proceed.
 - **Combinatorial growth for cluster tests**: `setSelection: all` generates P(n, k) sets for permutations or C(n, k) for combinations, where n is the number of cluster nodes and k is `setSize`. Each set runs as a complete DAG cycle. For large clusters with `setType: permutation` and high `setSize`, the number of sets grows factorially — e.g. 10 nodes with `setSize: 3` produces 720 permutations. Use `setSelection: random` or `setType: combination` (which produces 120 for the same parameters) to bound the run count.

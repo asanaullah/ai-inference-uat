@@ -12,7 +12,11 @@ spec:
     - name: component
       scope: node
       onFailure: continue
-    - name: inference
+    - name: guidellm
+      scope: node
+      onFailure: abort
+      timeout: 1200
+    - name: inference-perf
       scope: node
       onFailure: abort
       timeout: 1200

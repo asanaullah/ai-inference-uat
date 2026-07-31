@@ -14,7 +14,15 @@ from .common import (
     render_string,
     validate_node_resources,
 )
-from .models import DAGStep, LoadedTest, NodeSpec, Placement, Step, ToolConfig
+from .models import (
+    DAGStep,
+    LoadedTest,
+    ModelsStorageConfig,
+    NodeSpec,
+    Placement,
+    Step,
+    ToolConfig,
+)
 
 
 def compute_cluster_steps(
@@ -25,6 +33,7 @@ def compute_cluster_steps(
     base_path: str,
     jinja_env: Environment,
     nodes: list[NodeSpec] | None = None,
+    models_storage: ModelsStorageConfig | None = None,
 ) -> tuple[list[Step], dict[str, list[str]]]:
     if nodes is None:
         nodes = []
@@ -95,6 +104,7 @@ def compute_cluster_steps(
             node_set,
             set_key,
             placement.set_size,
+            models_storage=models_storage,
         )
 
     return steps, set_mappings
@@ -174,6 +184,7 @@ def _generate_set_steps(
     node_set: tuple[NodeSpec, ...],
     set_key: str,
     set_size: int,
+    models_storage: ModelsStorageConfig | None = None,
 ) -> None:
     set_segment = f"-{set_key}" if set_key else ""
     step_prefix = f"{test.test_id}-{test.name}{set_segment}"
@@ -211,6 +222,7 @@ def _generate_set_steps(
                 scope=scope,
                 node_spec_dict=node_spec_dict,
                 chain=set_key,
+                models_storage=models_storage,
             )
         else:
             sel_extra = f",chain={set_key}" if set_key else ""
@@ -232,6 +244,7 @@ def _generate_set_steps(
                 selector_extra=sel_extra,
                 node_spec_dict=node_spec_dict,
                 chain=set_key,
+                models_storage=models_storage,
             )
 
     selector = f"test={test.name},chain={set_key}" if set_key else f"test={test.name}"

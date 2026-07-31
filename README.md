@@ -11,6 +11,7 @@ A declarative test harness that generates Kubernetes manifests from test definit
   - [Test Scopes](#test-scopes)
     - [Placement (Cluster Scope)](#placement-cluster-scope)
   - [PVC Directory Hierarchy](#pvc-directory-hierarchy)
+- [Cluster Setup](#cluster-setup)
 - [Quickstart](#quickstart)
   - [Prerequisites](#prerequisites)
   - [Install](#install)
@@ -133,7 +134,7 @@ spec:
       scope: node
       onFailure: continue
 
-    - name: inference
+    - name: guidellm
       scope: node
       onFailure: abort
       timeout: 1200
@@ -179,7 +180,7 @@ spec:
 
 ### PVC Directory Hierarchy
 
-Every DAG step gets a unique directory on the PVC, computed transparently by the generator. Step names encode all hierarchy information (test_id, test name, node, DAG step), so directories are flat under the timestamp. Test pods write to `/workspace` and files land in the right place via `subPath` mounting.
+Every DAG step gets a unique directory on the PVC, computed transparently by the generator. Step names encode all hierarchy information (test_id, test name, node, DAG step), so directories are flat under the timestamp. Test pods write to `/uat_workspace` and files land in the right place via `subPath` mounting.
 
 ```
 <basePath>/<timestamp>/
@@ -198,6 +199,24 @@ Every DAG step gets a unique directory on the PVC, computed transparently by the
 
 DAG pods also get a second mount at `/binaries` for access to compiled test binaries.
 
+## Cluster Setup
+
+The `setup/` directory contains Kubernetes manifests for one-time cluster preparation:
+
+- **`namespaces-and-pvcs.yaml`** — creates the `uat-project` namespace, a 100Gi RWX PVC for test results (`uat-project-storage`), and RBAC (Role + RoleBinding) granting the test user access to pods, services, configmaps, and workload APIs.
+- **`uat-models-pvc.yaml`** — creates a 500Gi RWX PVC (`uat-models`) for pre-downloaded model weights.
+- **`model-downloader.yaml`** — a one-shot pod that downloads HuggingFace models to the models PVC. Add models to the `MODELS` list and re-run.
+
+Apply in order:
+
+```bash
+oc apply -f setup/namespaces-and-pvcs.yaml
+oc apply -f setup/uat-models-pvc.yaml
+oc apply -f setup/model-downloader.yaml
+# wait for downloads to complete:
+oc logs -f model-downloader -n uat-project
+```
+
 ## Quickstart
 
 ### Prerequisites
@@ -205,6 +224,7 @@ DAG pods also get a second mount at `/binaries` for access to compiled test bina
 - Python 3.10+
 - An OpenShift cluster with `oc` configured
 - A PVC with **ReadWriteMany (RWX)** access mode (e.g. CephFS, NFS). Multi-node runs pin pods to different nodes that share one PVC — RWO block storage will fail at scheduling.
+- A separate RWX PVC for model weights, referenced via `storage.models.pvc` in the cluster config (see [Cluster Setup](#cluster-setup))
 - Nodes labeled with `kubernetes.io/hostname`
 - For Tekton: a service account with permissions to create/delete pods, services, deployments, configmaps, and exec into pods in the target namespace
 
@@ -299,7 +319,7 @@ spec:
     - name: component
       scope: node
       onFailure: continue
-    - name: inference
+    - name: guidellm
       scope: node
       onFailure: abort
       timeout: 1200
@@ -417,7 +437,7 @@ parameterSweep:
     args: [guidellm, benchmark, run]
     flags:
       target: '{{ services["vllm-server"].url }}'
-      output-dir: /workspace
+      output-dir: /uat_workspace
       max-seconds: 120
   entries:
     - id: short-burst
@@ -474,7 +494,7 @@ Each suite entry can include a `spec` section that is deep-merged over the test 
 ```yaml
 spec:
   tests:
-    - name: inference
+    - name: guidellm
       scope: node
       onFailure: abort
       spec:
@@ -512,9 +532,13 @@ spec:
   storage:
     pvc: my-pvc
     basePath: uat/results
+    models:
+      pvc: my-models-pvc     # optional: mounted read-only at /models on all DAG pods
 ```
 
 The `compliance` section holds cluster-wide settings consumed by Go test binaries (e.g., the FIPS mode check in the component test). The harness passes these through via the embedded `cluster.yaml` — they are not used by the manifest generator.
+
+The optional `storage.models` section configures a separate volume for pre-downloaded model weights. When `models.pvc` is set, every DAG pod (both persistent and ephemeral) gets a read-only mount at `/models`. This decouples model storage from the results PVC and lets inference servers load weights from a shared cache (e.g. `--model /models/ibm-granite/granite-3.3-8b-instruct`) instead of downloading at runtime. When omitted, no models volume is mounted. `ModelsStorageConfig` is its own model so the backing store can be extended beyond PVC (e.g. to object storage or a CSI-based mount) without changing the rest of the storage config.
 
 The `name` field is the value matched against the `nodeSelectorKey` label (default: `kubernetes.io/hostname`). It is also used in step names for human readability. For Kubernetes resource names (pods, services, Tekton tasks), the generator sanitizes the node name: invalid characters are replaced with dashes, uppercase is lowercased, and names longer than 16 characters are truncated to 12 characters with a 4-character hash suffix. Short, simple names like `wrk-4` are used as-is; FQDN hostnames like `ip-10-0-1-42.ec2.internal` are automatically shortened.
 
@@ -553,12 +577,12 @@ Each test in `test_suite.yaml` can override the default timeout and declare its 
 ```yaml
 spec:
   tests:
-    - name: inference
+    - name: guidellm
       scope: node
       onFailure: abort
       timeout: 1200        # override defaultTestTimeout from config.yaml
 
-    - name: inference        # same test, different policy
+    - name: guidellm         # same test, different policy
       scope: node
       onFailure: continue
       timeout: 3600

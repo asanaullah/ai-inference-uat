@@ -5,17 +5,18 @@ set -e
 export HOME=/tmp
 export GOCACHE=/tmp/go-cache
 export GOPATH=/tmp/gopath
+export CGO_ENABLED=0
 export PATH="$PATH:$GOPATH/bin"
 
-cp /src/cluster.yaml /workspace/cluster.yaml
+cp /src/cluster.yaml /uat_workspace/cluster.yaml
 echo "Copied cluster.yaml to workspace"
 
 {% for test_name in tests %}
 echo "Building {{ test_name }} test binary..."
-mkdir -p /workspace/{{ test_name }}
-cp /src/{{ test_name }}_test.go /workspace/{{ test_name }}/test_test.go
-cp /src/cluster.yaml /workspace/{{ test_name }}/cluster.yaml
-cd /workspace/{{ test_name }}
+mkdir -p /uat_workspace/{{ test_name }}
+cp /src/{{ test_name }}_test.go /uat_workspace/{{ test_name }}/test_test.go
+cp /src/cluster.yaml /uat_workspace/{{ test_name }}/cluster.yaml
+cd /uat_workspace/{{ test_name }}
 go mod init test
 go mod edit -require github.com/onsi/ginkgo/v2@{{ ginkgo_version }}
 go mod tidy

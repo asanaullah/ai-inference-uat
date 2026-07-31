@@ -15,6 +15,7 @@ from .models import (
     ClusterTest,
     DAGStep,
     LoadedTest,
+    ModelsStorageConfig,
     NodeSpec,
     Step,
     Test,
@@ -437,6 +438,7 @@ def add_persistent_steps(
     scope: str,
     node_spec_dict: dict | None = None,
     chain: str = "",
+    models_storage: "ModelsStorageConfig | None" = None,
 ) -> None:
     step_name = f"{step_prefix}-{dag_step.name}"
     pod_name = f"{res_prefix}-{dag_step.name}"
@@ -481,6 +483,7 @@ def add_persistent_steps(
         "privileged": dag_step.privileged,
         "workspace_subpath": workspace_subpath,
         "binaries_subpath": binaries_subpath,
+        "models_storage": models_storage,
     }
     if chain:
         pod_ctx["chain"] = chain
@@ -562,6 +565,7 @@ def add_ephemeral_steps(
     selector_extra: str = "",
     node_spec_dict: dict | None = None,
     chain: str = "",
+    models_storage: "ModelsStorageConfig | None" = None,
 ) -> None:
     has_sweep = dag_step.parameter_sweep is not None
 
@@ -616,7 +620,7 @@ def add_ephemeral_steps(
             pod_command = [
                 binary,
                 f"--ginkgo.label-filter={dag_step.label_filter}",
-                "--ginkgo.junit-report=/workspace/junit.xml",
+                "--ginkgo.junit-report=/uat_workspace/junit.xml",
             ]
         elif dag_step.command:
             if has_sweep:
@@ -639,7 +643,7 @@ def add_ephemeral_steps(
         if dag_step.label_filter and not any(
             e.get("name") == "RESULTS_DIR" for e in env
         ):
-            env.append({"name": "RESULTS_DIR", "value": "/workspace"})
+            env.append({"name": "RESULTS_DIR", "value": "/uat_workspace"})
 
         resources = (
             render_resources(dag_step.resources, full_ctx, jinja_env)
@@ -667,6 +671,7 @@ def add_ephemeral_steps(
             "privileged": dag_step.privileged,
             "workspace_subpath": workspace_subpath,
             "binaries_subpath": binaries_subpath,
+            "models_storage": models_storage,
         }
         if chain:
             pod_ctx["chain"] = chain

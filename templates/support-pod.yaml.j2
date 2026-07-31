@@ -13,7 +13,7 @@ spec:
       command: ["sleep", "infinity"]
       volumeMounts:
         - name: workspace
-          mountPath: /workspace
+          mountPath: /uat_workspace
 {% if workspace_subpath %}
           subPath: {{ workspace_subpath }}
 {% endif %}

@@ -2,17 +2,14 @@
 apiVersion: uat.openshift.io/v1
 kind: Test
 metadata:
-  name: inference
+  name: guidellm
   version: v0.0.1
-  description: Basic vLLM inference server validation with guidellm benchmarking
+  description: vLLM inference server validation with guidellm benchmarking
 spec:
   source:
-    ginkgo: inference.go
+    ginkgo: guidellm.go
 
-  # DAG definition - what resources to deploy and in what order
   dag:
-    # Step 1: Deploy vLLM server (stays up for entire test)
-    # Note: Tekton must create a Service for DNS resolution
     - name: vllm-server
       image: nvcr.io/nvidia/vllm:26.03-py3
       service:
@@ -26,7 +23,7 @@ spec:
           - -m
           - vllm.entrypoints.openai.api_server
         flags:
-          model: ibm-granite/granite-3.3-8b-instruct
+          model: /models/ibm-granite/granite-3.3-8b-instruct
           port: 8000
           max-model-len: 10000
           gpu-memory-utilization: 0.6
@@ -52,7 +49,6 @@ spec:
       persistsThroughSweep: true
       parameterSweep: null
 
-    # Step 2: Run pass-fail checks (health, model endpoint)
     - name: pass-fail
       image: ghcr.io/vllm-project/guidellm:v0.6.1
       labelFilter: pass-fail
@@ -64,7 +60,6 @@ spec:
       persistsThroughSweep: false
       parameterSweep: null
 
-    # Step 3: Run benchmark sweeps (only if pass-fail succeeded)
     - name: sweep
       image: ghcr.io/vllm-project/guidellm:v0.6.1
       labelFilter: quantitative
@@ -84,7 +79,7 @@ spec:
             - run
           flags:
             target: '{{ services["vllm-server"].url }}'
-            output-dir: /workspace
+            output-dir: /uat_workspace
             outputs: json
             rate-type: throughput
             max-seconds: 120

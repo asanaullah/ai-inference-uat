@@ -6,7 +6,7 @@ from typing import Any
 from jinja2 import Environment
 
 from .common import add_ephemeral_steps, add_persistent_steps, add_teardown_steps
-from .models import LoadedTest, Step, ToolConfig
+from .models import LoadedTest, ModelsStorageConfig, Step, ToolConfig
 
 
 def compute_project_steps(
@@ -16,6 +16,7 @@ def compute_project_steps(
     pvc: str,
     base_path: str,
     jinja_env: Environment,
+    models_storage: ModelsStorageConfig | None = None,
 ) -> list[Step]:
     steps: list[Step] = []
     step_prefix = f"{test.test_id}-{test.name}"
@@ -43,6 +44,7 @@ def compute_project_steps(
                 services=services,
                 jinja_env=jinja_env,
                 scope=scope,
+                models_storage=models_storage,
             )
         else:
             add_ephemeral_steps(
@@ -60,6 +62,7 @@ def compute_project_steps(
                 services=services,
                 jinja_env=jinja_env,
                 scope=scope,
+                models_storage=models_storage,
             )
 
     add_teardown_steps(

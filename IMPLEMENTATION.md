@@ -37,9 +37,23 @@ templates/
 
 ## Compute / Write Architecture
 
-The generator is invoked as `python -m src` with three required inputs: `--test-suite` (path to `test_suite.yaml`), `--test-lib` (directory containing `<test>.yaml` and `<test>.go` files), and `--cluster` (path to the cluster config). An alternative `--steps` flag accepts a previously written `steps.json`, skipping step computation and re-running only the writers — useful for editing steps externally or regenerating output with different options. The manual writer also accepts `--run-id` to set the timestamp substitution value.
+The generator is invoked as `python -m src`. Full CLI:
+
+| Flag | Default | Required | Description |
+|---|---|---|---|
+| `--test-suite` | — | Yes (unless `--steps`) | Path to `test_suite.yaml` |
+| `--test-lib` | — | Yes (unless `--steps`) | Directory containing `<test>.yaml` and `<test>.go` files |
+| `--cluster` | — | Yes (unless `--steps`) | Path to the cluster config |
+| `--config` | `config.yaml` | No | Path to `config.yaml` (ToolConfig) |
+| `--steps` | — | No | Path to a previously written `steps.json` — skips step computation, re-runs only the writers |
+| `--run-id` | `manual-run` | No | Timestamp substitution value for manual output |
+| `--output` | `build` | No | Output directory root (writers create `manual/` and `tekton/` under this) |
+| `--scripts-dir` | `scripts` | No | Directory containing `aggregate.py` (bundled into the ConfigMap) |
+| `--templates-dir` | `templates` | No | Directory containing Jinja2 templates (`.yaml.j2`, `.sh.j2`) |
 
 `main()` in `main.py` branches on `--steps`: if provided, it loads the step list from `steps.json` via `load_steps_file()`, re-validates pod and service names, and proceeds directly to the writers. Otherwise, it loads the three input files, computes steps, validates, serializes to `steps.json`, and then runs both writers.
+
+**Error handling:** `main()` wraps each phase in targeted exception handlers. Template engine initialization catches `OSError` and `TemplateError`. Steps file loading catches `FileNotFoundError`, `json.JSONDecodeError`, `ValidationError`, and `ValueError`. Each writer catches `OSError`, `TemplateError`, and `ValueError`. All caught exceptions print a descriptive error message and raise `SystemExit(1)` — the generator never produces partial output on failure.
 
 The generator separates **what to run** (step computation) from **how to run it** (writers). Step computation produces a single ordered list of steps — the complete specification of every resource and action needed for the test suite. Writers are independent consumers that each translate the same step list into a different execution format. Adding a new execution backend (e.g. Argo Workflows, GitHub Actions) means writing a new writer — step computation doesn't change.
 
@@ -74,7 +88,7 @@ Produces a flat list of `Step` dataclasses. Each step is one of two types:
 - `config.pod_name` — target pod for apply+wait-ready / apply+poll-completed steps (also used for uniqueness validation)
 - `config.target` — pod to exec into (exec steps only)
 - `config.args` — command arguments (exec steps only)
-- `config.selector` — label selector for delete steps (e.g. `test=inference,node=wrk-4,sweep=pass-fail`)
+- `config.selector` — label selector for delete steps (e.g. `test=guidellm,node=wrk-4,sweep=pass-fail`)
 - `config.configmap_name` — ConfigMap name for delete-all steps
 - `config.managed_by_label` — managed-by label value for delete-all steps
 - `config.service_name` — service name for generate steps with an associated Service (used for DNS-1035 validation)
@@ -256,15 +270,15 @@ Each test produces one or more task chains placed directly in the cluster pipeli
 
 ```
 node-scoped chain (one of N parallel chains):
-  2-inference-wrk-4-vllm-server                          [persistent deploy]
-    → 2-inference-wrk-4-pass-fail                         [ephemeral run]
-    → 2-inference-wrk-4-cleanup-pass-fail                 [per-ephemeral cleanup]
-    → 2-inference-wrk-4-sweep-short-burst                 [ephemeral run (sweep)]
-    → 2-inference-wrk-4-cleanup-sweep-short-burst         [per-ephemeral cleanup]
-    → 2-inference-wrk-4-sweep-sustained-load              [ephemeral run (sweep)]
-    → 2-inference-wrk-4-cleanup-sweep-sustained-load      [per-ephemeral cleanup]
-    → 2-inference-wrk-4-teardown                          [teardown]
-    → 2-inference-wrk-4-finally-teardown                  [finally-teardown, no when guard]
+  2-guidellm-wrk-4-vllm-server                           [persistent deploy]
+    → 2-guidellm-wrk-4-pass-fail                          [ephemeral run]
+    → 2-guidellm-wrk-4-cleanup-pass-fail                  [per-ephemeral cleanup]
+    → 2-guidellm-wrk-4-sweep-short-burst                  [ephemeral run (sweep)]
+    → 2-guidellm-wrk-4-cleanup-sweep-short-burst          [per-ephemeral cleanup]
+    → 2-guidellm-wrk-4-sweep-sustained-load               [ephemeral run (sweep)]
+    → 2-guidellm-wrk-4-cleanup-sweep-sustained-load       [per-ephemeral cleanup]
+    → 2-guidellm-wrk-4-teardown                           [teardown]
+    → 2-guidellm-wrk-4-finally-teardown                   [finally-teardown, no when guard]
 
 cluster-scoped chains (setSize: 2, setSelection: all — sequential):
   set0: 3-network-set0-iperf-server                       [persistent deploy]
@@ -324,6 +338,7 @@ Every parsed config field and where it takes effect. **This is the section to ch
 | `spec.namespace` | `ClusterTestSpec.namespace` | Kubernetes namespace for all generated resources |
 | `spec.storage.pvc` | `StorageConfig.pvc` | PVC name mounted on all pods (via `subPath` — see PVC Directory Hierarchy) |
 | `spec.storage.basePath` | `StorageConfig.base_path` | Root of the directory hierarchy on the PVC: `<basePath>/<timestamp>/<step_name>/`. See PVC Directory Hierarchy |
+| `spec.storage.models.pvc` | `ModelsStorageConfig.pvc` | Optional PVC name for pre-downloaded model weights. When set, all DAG pods (persistent and ephemeral) get a read-only mount at `/models`. When empty or omitted, no models volume is mounted |
 
 ### Test (`<test-lib>/<test>.yaml`)
 
@@ -333,7 +348,7 @@ Every parsed config field and where it takes effect. **This is the section to ch
 | `spec.dag[].persistsThroughSweep` | `DAGStep.persists_through_sweep` | `true`: rendered as generate + command (apply, wait-ready) pod (+ service); stays up for all sweep entries. `false`: rendered as generate + command (apply, poll-completed) pod; one per sweep entry |
 | `spec.dag[].service` | `DAGStep.service` | If `enabled: true`, generates a Service manifest and populates `{{ services["name"].url }}` in template context. `headless: true` (default) creates a headless Service (ClusterIP: None) |
 | `spec.dag[].command` | `DAGStep.command` | Structured command: `args` + `flags` → `["arg1", "--key=value"]`. Both persistent and non-persistent steps render command args through the Jinja2 template context (`serverConfig`, `nodeSpec`, `services`, `node`, `timestamp`). Non-persistent steps additionally have `paramSweep` available |
-| `spec.dag[].labelFilter` | `DAGStep.label_filter` | If set, takes priority over `command`: generates a ginkgo command with `--ginkgo.label-filter=<value>` and `--ginkgo.junit-report=/workspace/junit.xml`. Also auto-injects `RESULTS_DIR` env var if not already present |
+| `spec.dag[].labelFilter` | `DAGStep.label_filter` | If set, takes priority over `command`: generates a ginkgo command with `--ginkgo.label-filter=<value>` and `--ginkgo.junit-report=/uat_workspace/junit.xml`. Also auto-injects `RESULTS_DIR` env var if not already present |
 | `spec.dag[].parameterSweep` | `DAGStep.parameter_sweep` | If set: one test pod per `entries[]`. Each entry's `flags` are merged over `baseCommand.flags`. If null: single test pod using the step's own command |
 | `spec.dag[].env` | `DAGStep.env` | Env vars. Values are rendered through Jinja2 with the full template context |
 | `spec.dag[].resources` | `DAGStep.resources` | Resource requests/limits. Values are rendered through Jinja2 with the full template context (`nodeSpec`, `serverConfig`, `services`, `node`, `timestamp`), so expressions like `{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}` work in both persistent and non-persistent steps. |
@@ -372,16 +387,16 @@ The timestamp is used for results path isolation between runs. Getting it wrong 
 main() computes all steps with timestamp='__TIMESTAMP__'
   │
   ├── Manual output: _stamp() replaces '__TIMESTAMP__' → args.run_id (e.g. 'manual-run')
-  │   Workspace at: /workspace (subPath: <basePath>/<run-id>/<step_name>/)
+  │   Workspace at: /uat_workspace (subPath: <basePath>/<run-id>/<step_name>/)
   │
   └── Tekton output: write_tekton() replaces '__TIMESTAMP__' → '$(context.pipelineRun.name)'
       All tasks reference $(context.pipelineRun.name) directly.
-      Workspace at: /workspace (subPath: <basePath>/$(context.pipelineRun.name)/<step_name>/)
+      Workspace at: /uat_workspace (subPath: <basePath>/$(context.pipelineRun.name)/<step_name>/)
 ```
 
 ## PVC Directory Hierarchy and Volume Mounting
 
-Every DAG step gets a unique directory on the PVC, named after the step. The step name encodes all hierarchy information (test_id, test name, node or set index, DAG step), so directories are flat under the timestamp. Test authors do not specify paths — they write to `/workspace` and files land in the right place.
+Every DAG step gets a unique directory on the PVC, named after the step. The step name encodes all hierarchy information (test_id, test name, node or set index, DAG step), so directories are flat under the timestamp. Test authors do not specify paths — they write to `/uat_workspace` and files land in the right place.
 
 ### Directory Hierarchy
 
@@ -400,29 +415,29 @@ Each step's workspace directory is named after its step name. All step directori
         summary.json
 ```
 
-Concrete example with `basePath=uat/results`, two node-scoped tests (component, inference), a cluster-scoped test, and a project-scoped test:
+Concrete example with `basePath=uat/results`, two node-scoped tests (component, guidellm), a cluster-scoped test, and a project-scoped test:
 
 ```
 uat/results/uat-cluster-run-abc12/
   binaries/
     component/test.bin
-    inference/test.bin
+    guidellm/test.bin
   1-component-wrk-4-test-runner/
     junit.xml
   1-component-wrk-6-test-runner/
     junit.xml
-  2-inference-wrk-4-vllm-server/           ← persistent DAG pod workspace (logs, cache)
-  2-inference-wrk-4-pass-fail/
+  2-guidellm-wrk-4-vllm-server/            ← persistent DAG pod workspace (logs, cache)
+  2-guidellm-wrk-4-pass-fail/
     junit.xml
-  2-inference-wrk-4-sweep-short-burst/
+  2-guidellm-wrk-4-sweep-short-burst/
     junit.xml
     results.json
-  2-inference-wrk-4-sweep-sustained-load/
+  2-guidellm-wrk-4-sweep-sustained-load/
     junit.xml
-  2-inference-wrk-4-sweep-long-context/
+  2-guidellm-wrk-4-sweep-long-context/
     junit.xml
-  2-inference-wrk-6-vllm-server/
-  2-inference-wrk-6-pass-fail/
+  2-guidellm-wrk-6-vllm-server/
+  2-guidellm-wrk-6-pass-fail/
     junit.xml
   ...
   3-network-set0-iperf-server/             ← cluster-scoped, set 0
@@ -459,17 +474,18 @@ The `__TIMESTAMP__` placeholder is substituted by each writer: the manual writer
 
 Each pod type mounts the PVC with a `subPath` scoped to its role. DAG pods also get a second mount at `/binaries` for access to compiled test binaries.
 
-| Pod type | `/workspace` | `/binaries` | Notes |
-|---|---|---|---|
-| Builder | subPath: `<basePath>/<ts>/binaries` | — | Writes to `/workspace/<test>/test.bin` |
-| Aggregator | subPath: `<basePath>/<ts>` | — | Scans step directories for `junit.xml` |
-| Persistent DAG pod | subPath: `<basePath>/<ts>/<step_name>` | subPath: `<basePath>/<ts>/binaries` | Server logs, model cache written to `/workspace` |
-| Ephemeral test pod | subPath: `<basePath>/<ts>/<step_name>` | subPath: `<basePath>/<ts>/binaries` | `junit.xml` written to `/workspace` |
+| Pod type | `/uat_workspace` | `/binaries` | `/models` | Notes |
+|---|---|---|---|---|
+| Builder | subPath: `<basePath>/<ts>/binaries` | — | — | Writes to `/uat_workspace/<test>/test.bin` |
+| Aggregator | subPath: `<basePath>/<ts>` | — | — | Scans step directories for `junit.xml` |
+| Persistent DAG pod | subPath: `<basePath>/<ts>/<step_name>` | subPath: `<basePath>/<ts>/binaries` | models PVC root (read-only, if configured) | Server logs, model cache written to `/uat_workspace` |
+| Ephemeral test pod | subPath: `<basePath>/<ts>/<step_name>` | subPath: `<basePath>/<ts>/binaries` | models PVC root (read-only, if configured) | `junit.xml` written to `/uat_workspace` |
 
-Because `/workspace` IS the step's unique directory:
-- Test pods write `junit.xml` to `/workspace/junit.xml`
+Because `/uat_workspace` IS the step's unique directory:
+- Test pods write `junit.xml` to `/uat_workspace/junit.xml`
 - Ginkgo binaries are accessed at `/binaries/<test>/test.bin`
-- Benchmark tools use `output-dir: /workspace`
+- Benchmark tools use `output-dir: /uat_workspace`
+- Pre-downloaded model weights are available at `/models/<org>/<model>` (when `storage.models.pvc` is configured)
 
 ## Pod Name Conventions
 
@@ -477,10 +493,10 @@ Pod and service names use the step's `resource_name`, which encodes test_id, tes
 
 | Resource | Name pattern | Example |
 |---|---|---|
-| Persistent DAG pod (node) | `<test_id>-<test>-<node>-<dag_step.name>` | `2-inference-wrk-4-vllm-server` |
-| Service (node) | `svc-<test_id>-<test>-<node>-<service.name>` | `svc-2-inference-wrk-4-vllm-server` |
+| Persistent DAG pod (node) | `<test_id>-<test>-<node>-<dag_step.name>` | `2-guidellm-wrk-4-vllm-server` |
+| Service (node) | `svc-<test_id>-<test>-<node>-<service.name>` | `svc-2-guidellm-wrk-4-vllm-server` |
 | Test pod (node) | `<test_id>-<test>-<node>-<dag_step.name>` | `1-component-wrk-4-test-runner` |
-| Test pod (node, sweep) | `<test_id>-<test>-<node>-<dag_step.name>-<id>` | `2-inference-wrk-4-sweep-short-burst` |
+| Test pod (node, sweep) | `<test_id>-<test>-<node>-<dag_step.name>-<id>` | `2-guidellm-wrk-4-sweep-short-burst` |
 | Persistent DAG pod (cluster, multiple sets) | `<test_id>-<test>-set<i>-<dag_step.name>` | `3-network-set0-iperf-server` |
 | Service (cluster, multiple sets) | `svc-<test_id>-<test>-set<i>-<service.name>` | `svc-3-network-set0-iperf-server` |
 | Test pod (cluster, multiple sets) | `<test_id>-<test>-set<i>-<dag_step.name>` | `3-network-set0-iperf-client` |
@@ -492,7 +508,7 @@ Pod and service names use the step's `resource_name`, which encodes test_id, tes
 | Builder pod | `<tc.builder_pod_name>` (predefined name) | `ginkgo-builder` |
 | Aggregator pod | `<tc.aggregator_pod_name>` (predefined name) | `uat-aggregator` |
 
-Service names are prefixed with `svc-` for DNS-1035 compliance (services must start with a letter, while pod names follow RFC 1123 which allows leading digits). Service URLs in the template context use the full service name: `{{ services["vllm-server"].url }}` → `http://svc-2-inference-wrk-4-vllm-server:8000`.
+Service names are prefixed with `svc-` for DNS-1035 compliance (services must start with a letter, while pod names follow RFC 1123 which allows leading digits). Service URLs in the template context use the full service name: `{{ services["vllm-server"].url }}` → `http://svc-2-guidellm-wrk-4-vllm-server:8000`.
 
 ## Jinja2 Template Engine
 
@@ -591,35 +607,37 @@ main()
 
 | Template | Produces |
 |---|---|
-| `configmap.yaml.j2` | ConfigMap with all source files |
-| `support-pod.yaml.j2` | Builder and aggregator pods (sleep infinity) |
-| `dag-pod.yaml.j2` | Persistent DAG pods with PVC mount (e.g. vLLM server) |
-| `dag-service.yaml.j2` | Kubernetes Service for DAG pods (persistent or ephemeral) |
-| `test-pod.yaml.j2` | Run-to-completion test pods with PVC mount |
+| `configmap.yaml.j2` | ConfigMap with all source files. Iterates over a `files` dict (filename → content), embedding each via `indent` filter. Labels with managed-by |
+| `support-pod.yaml.j2` | Builder and aggregator pods. Runs `sleep infinity`, mounts PVC at `/uat_workspace` with optional `subPath`, and optionally mounts a ConfigMap at `/src`. `restartPolicy: Never` |
+| `dag-pod.yaml.j2` | Persistent DAG pod manifest. Supports `nodeSelector`, `hostPID` + `privileged` mode, structured command with `yaml_quote`, env vars, ports, `readinessProbe`, resource requests/limits, extra `volumeMounts` and `volumes`, and hardcoded PVC mounts at `/uat_workspace` (subPath: step dir) and `/binaries` (subPath: binaries dir). When `models_storage` is set with a non-empty `pvc`, adds a read-only mount at `/models` from the models PVC. `restartPolicy: Never` |
+| `dag-service.yaml.j2` | Kubernetes Service for DAG pods. Supports headless services (`clusterIP: None`). Labels: `test`, `dag-step`, `node`, `chain`, `sweep`. Selector matches pod labels for targeted routing |
+| `test-pod.yaml.j2` | Run-to-completion test pod manifest. Identical to `dag-pod.yaml.j2` except: always includes a `sweep` label (for targeted cleanup by the per-ephemeral cleanup step), and does not support `readinessProbe` (ephemeral pods are poll-completed, not wait-ready). Same conditional `/models` mount as `dag-pod.yaml.j2` |
 
-| `build.sh.j2` | Shell script to compile all Ginkgo binaries (rendered during setup, embedded in ConfigMap) |
+| Template | Produces |
+|---|---|
+| `build.sh.j2` | Build script embedded in ConfigMap. Sets Go environment (`HOME=/tmp`, `GOCACHE`, `GOPATH`), copies `cluster.yaml` to workspace, then for each test: copies `<test>_test.go`, initializes `go.mod` with `go mod init test` + `go mod edit -require ginkgo@<version>`, runs `go mod tidy` + `go mod download`, builds with `ginkgo build -r .`, and renames the output to `test.bin` |
 
 **Tekton task templates** (used by the Tekton writer for command steps):
 
 | Template | Produces |
 |---|---|
-| `pipeline.yaml.j2` | Tekton Pipeline (single flat cluster pipeline) |
-| `task-guard.yaml.j2` | Guard task (one per test, checks task statuses, `onError` set by failure policy) |
-| `pipelinerun.yaml.j2` | Tekton PipelineRun with timeout |
-| `task-apply-wait-ready.yaml.j2` | Tekton Task: apply manifest + wait Ready |
-| `task-exec.yaml.j2` | Tekton Task: exec command in target pod |
-| `task-run-test-pod.yaml.j2` | Tekton Task: apply test pod + poll Succeeded/Failed |
-| `task-teardown.yaml.j2` | Tekton Task: label-based delete |
-| `task-cleanup.yaml.j2` | Tekton Task: delete all pods + services + deployments + configmap |
+| `pipeline.yaml.j2` | Tekton Pipeline. Iterates over `tasks` and `finally_tasks`, each with `taskRef`, params (including timestamp from pipeline context), `runAfter` dependencies, `when` expressions, and `onError` |
+| `task-guard.yaml.j2` | Guard task. Takes a `statuses` string param (comma-separated task statuses). Shell script splits on commas with `IFS=',' read -ra`, iterates, exits 1 if any value is `"Failed"` |
+| `pipelinerun.yaml.j2` | PipelineRun with `generateName: uat-cluster-run-`, pipeline and finally timeouts in seconds |
+| `task-apply-wait-ready.yaml.j2` | Applies an inline manifest via heredoc (`oc apply -f - <<'MANIFEST_EOF'`). If `wait_ready` is true, runs `oc wait --for=condition=Ready pod/<name> --timeout=<N>s` |
+| `task-exec.yaml.j2` | Runs `oc exec <target> -- <args \| shell_join>` |
+| `task-run-test-pod.yaml.j2` | Applies test pod manifest via heredoc, then polls with a deadline: checks `oc get pod -o jsonpath='{.status.phase}'` every 5s, exits 0 on `Succeeded`, exits 1 on `Failed` or timeout. Tails 50 lines of logs on failure |
+| `task-teardown.yaml.j2` | Runs `oc delete pods,services,deployments -l <selector> --ignore-not-found` |
+| `task-cleanup.yaml.j2` | Deletes all pods, services, deployments by managed-by label, plus the named ConfigMap. Each resource type deleted separately with `--ignore-not-found` |
 
 **Manual script templates** (derived from command step config by the manual writer):
 
 | Template | Produces |
 |---|---|
-| `apply-script.sh.j2` | `oc apply -f` scripts referencing a manifest file |
-| `exec-script.sh.j2` | `oc exec` wrapper scripts |
-| `teardown-script.sh.j2` | Label-based `oc delete` for test resources |
-| `cleanup-script.sh.j2` | Final cleanup of all pods + services + deployments + configmap |
+| `apply-script.sh.j2` | Three code paths based on `probe`. **`none`**: `oc apply -f <manifest>`. **`wait-ready`**: apply, then `oc wait --for=condition=Ready --timeout=<N>s`, then tail 10 lines of logs. **`poll-completed`**: apply, poll until pod starts (Running/Succeeded/Failed), stream logs with `oc logs -f`, then check terminal phase — if still running after logs end, poll with a deadline (5s interval) until Succeeded/Failed/timeout |
+| `exec-script.sh.j2` | `oc exec <target> -- <args \| shell_join>` |
+| `teardown-script.sh.j2` | `oc delete pods,services,deployments -l <selector> --ignore-not-found` |
+| `cleanup-script.sh.j2` | Deletes all pods, services, deployments by managed-by label, plus the named ConfigMap |
 
 ## Pydantic Model Reference
 
@@ -627,14 +645,34 @@ main()
 |---|---|---|
 | `TestSuite` | `test_suite.yaml` | `spec.tests[]` — ordered list of `TestEntry` (name, scope, onFailure, timeout, placement, spec) |
 | `Test` | `<test>.yaml` | `spec.dag[]`, `spec.source`, `spec.serverConfig` |
-| `DAGStep` | nested in `Test` | `name`, `image`, `command`, `env`, `service`, `ports`, `readinessProbe`, `resources`, `volumeMounts`, `volumes`, `privileged`, `persistsThroughSweep`, `parameterSweep`, `labelFilter` |
+| `DAGStep` | nested in `Test` | `name`, `image`, `command`, `env`, `service`, `ports`, `readinessProbe`, `resources`, `volumeMounts`, `volumes`, `privileged`, `persistsThroughSweep`, `parameterSweep`, `labelFilter`. **Model validator:** `persistsThroughSweep` and `parameterSweep` are mutually exclusive — setting both raises `ValueError` (a persistent step cannot have its own sweep) |
 | `ParameterSweep` | nested in `DAGStep` | `baseCommand.{args,flags}`, `entries[].{id,description,flags}` |
-| `ClusterTest` | `cluster/*.yaml` | `spec.nodes[]`, `spec.namespace`, `spec.storage.{pvc,basePath}`, `spec.compliance` |
+| `ClusterTest` | `cluster/*.yaml` | `spec.nodes[]`, `spec.namespace`, `spec.storage.{pvc,basePath,models}`, `spec.compliance` |
+| `ModelsStorageConfig` | nested in `StorageConfig` | `pvc` — PVC name for model weights. When non-empty, all DAG pods get a read-only mount at `/models`. Designed as a separate model so the backing store can be extended beyond PVC |
 | `NodeSpec` | nested in `ClusterTest` | `name`, `componentValidation.sanity.*` (all via `extra="allow"`, keys use K8s resource names) |
 | `ToolConfig` | `config.yaml` | `oseCLIImage`, `builderImage`, `ginkgoVersion`, `aggregatorImage`, `configmapName`, `builderPodName`, `aggregatorPodName`, `nodeSelectorKey`, `managedByLabel`, `builderTimeout`, `aggregatorTimeout`, `deployTimeout`, `defaultTestTimeout`, `pipelineTimeout`, `finallyTimeout` |
 | `LoadedTest` | (dataclass) | `name`, `spec: TestSpec`, `go_source`, `on_failure`, `timeout`, `test_id`, `scope`, `placement` |
 | `Step` | (dataclass) | `name`, `type` (`generate` or `command`), `config` (type-specific: `output`/`command`/`probe`/`timeout`), `content` (generate only), `source` (command only, list of generate step names), `resource_name` (sanitized name for Kubernetes resources; equals `name` when already RFC 1123 compliant), `node` (node name, empty for global steps), `test` (test name, empty for setup/teardown), `test_id` (1-indexed position in test suite, empty for setup/teardown), `on_failure` (test policy: `continue`/`skipTest`/`abort`, empty for setup/teardown), `finally_step` (if `true` and no `test`: placed in cluster pipeline `finally` block; if `true` and has `test`: rendered as regular task with no `when` guard), `lifecycle` (`true` for cleanup, teardown, and finally-teardown steps — no `when` guards, excluded from guard task status checks), `scope`, `phase` |
-| `StepsFile` | `steps.json` | `metadata` (must contain `toolConfig`, `clusterSpec`, and `setMappings` for cluster-scoped tests recording which nodes are in each set keyed by `test_id`), `steps[]` — flat list of serialized steps. Validated on load: step structure, source references, pod name uniqueness, and failure policy labels |
+| `StepsFile` | `steps.json` | `metadata` (must contain `toolConfig`, `clusterSpec`, and `setMappings` for cluster-scoped tests recording which nodes are in each set keyed by `test_id`), `steps[]` — flat list of serialized steps. **Model validator** runs `_validate_section` and `_validate_on_failure` (see StepsFile Validation Rules below) |
+
+### StepsFile Validation Rules
+
+When loading from `steps.json`, the `StepsFile` model validator runs two validation passes in `models.py`:
+
+**`_validate_section(steps)`** — structural validation of each step:
+1. Every step must have a non-empty `name`
+2. `type` must be `"generate"` or `"command"`
+3. No duplicate `config.pod_name` values across steps (would cause resource collisions)
+4. Generate steps must have non-empty `content` and `config.output`
+5. Command steps must have `config.command` in `{apply, exec, delete, delete-all}` and `config.probe` in `{none, wait-ready, poll-completed}`
+6. `source` references in command steps must point to a preceding generate step's `name` (forward references are rejected)
+
+**`_validate_on_failure(steps)`** — failure policy consistency:
+1. Command steps with a `test` field must have `on_failure` in `{continue, skipTest, abort}`
+2. Command steps without a `test` field (setup/teardown) must have empty `on_failure`
+3. Generate steps are skipped (they carry no failure policy)
+
+Additionally, `load_steps_file()` in `step_generator.py` validates that `metadata` contains valid `toolConfig` and `clusterSpec` by constructing `ToolConfig` and `ClusterTestSpec` from them. After loading, it runs `_validate_unique_pod_names` (RFC 1123 + uniqueness) and `_validate_service_names` (DNS-1035) on the reconstructed step list.
 
 ## Resource Validation
 
@@ -642,10 +680,34 @@ For node-scoped and cluster-scoped tests, `validate_node_resources` in `common.p
 
 For cluster-scoped tests, `setRequirements` in the placement config filters nodes by comparing requirement values against the sanity dict. Numeric values check `>=`, string values check exact match.
 
+## Aggregation Script
+
+`scripts/aggregate.py` is deployed via the ConfigMap and executed by the aggregator pod. It is a standalone Python script with no dependencies beyond the standard library.
+
+**`parse_junit(path)`** — parses a JUnit XML file. Handles both `<testsuites>` (iterates child `<testsuite>` elements) and bare `<testsuite>` root elements. Accumulates `tests`, `failures`, `errors`, and `skipped` counts from each suite's attributes. Returns a dict of counts.
+
+**`main()`** — CLI entry point. Takes a single argument: the results directory path. Walks the directory tree with `os.walk`, pruning `binaries/` and `report/` from `dirnames` (so they're never descended into). For each directory containing `junit.xml`, calls `parse_junit` and accumulates totals. Each directory produces a per-entry dict with its relative path as `name`, the four counts, and a `status` of `"passed"` (no failures or errors) or `"failed"`. Writes `report/summary.json` with `{"status": <overall>, "totals": {...}, "entries": [...]}` and prints the summary to stdout. Exits 1 if no arguments provided.
+
+## Manual Writer Script Permissions
+
+`_make_executable()` in `writers/manual.py` adds execute permissions (user, group, other) to all generated `.sh` files via `os.chmod`, so they can be run directly without `bash <script>`.
+
+## Example Test Library Reference
+
+See [`examples/minimal/README.md`](examples/minimal/README.md) for detailed documentation of the five example test implementations (`component.go`, `guidellm.go`, `inference-perf.go`, `iperf3.go`, `platform-check.go`).
+
+## Dependencies and CI
+
+**Python dependencies** (`requirements.txt`): `jinja2>=3.1`, `pydantic>=2.0`, `pytest>=7.0`, `pyyaml>=6.0`.
+
+**CI pipeline** (`.github/workflows/ci.yaml`): two GitHub Actions jobs triggered on push/PR to `main`:
+- `lint`: runs `ruff check` + `ruff format --check`
+- `test`: matrix across Python 3.10–3.13, installs dependencies, runs `pytest tests/ -v`
+
 ## Known Constraints
 
 - **ConfigMap 1MB limit:** All Go source, cluster config, test suite config, build script, and aggregator script are packed into a single ConfigMap. A project with many tests may exceed Kubernetes' 1MB ConfigMap limit.
-- **Resource name length**: step and task names are constructed by concatenating test_id, test name, node or set index, and DAG step (e.g. `2-inference-wrk-4-vllm-server`, `3-network-set0-iperf-server`). Node names are capped at 16 characters (12 + 4-char hash if longer), but the full resource name can still exceed the 63-character Kubernetes name limit with long test or DAG step names.
+- **Resource name length**: step and task names are constructed by concatenating test_id, test name, node or set index, and DAG step (e.g. `2-guidellm-wrk-4-vllm-server`, `3-network-set0-iperf-server`). Node names are capped at 16 characters (12 + 4-char hash if longer), but the full resource name can still exceed the 63-character Kubernetes name limit with long test or DAG step names.
 - **One cluster pipeline per namespace**: the builder pod has a fixed name, so only one cluster pipeline can run at a time in a given namespace. This is typically sufficient — the task chains are the element that scales with cluster size, and a single cluster pipeline fans out to all target nodes in parallel.
 - **Sequential sweeps**: parameter sweep entries within a test run as separate pods in sequence. Failure behavior is controlled per-test via the `onFailure` field in `test_suite.yaml` (`continue`, `skipTest`, or `abort`). All three policies produce a guard task between tests. `continue` uses no `when` guards, so all tasks run through failures. `skipTest` adds `when` guards that skip remaining test steps in the chain after a failure. Both use `onError: continue` on the guard task, so the next test always proceeds. `abort` uses the same `when` guards as `skipTest`, but the guard task uses `onError: stopAndFail` — halting the pipeline if any chain had a failure. In manual mode, scripts are independent and the operator controls whether to proceed.
 - **Combinatorial growth for cluster tests**: `setSelection: all` generates P(n, k) sets for permutations or C(n, k) for combinations, where n is the number of eligible nodes and k is `setSize`. Each set runs as a complete DAG cycle. For large clusters with `setType: permutation` and high `setSize`, the number of sets grows factorially — e.g. 10 nodes with `setSize: 3` produces 720 permutations. Use `setSelection: random` or `setType: combination` (which produces 120 for the same parameters) to bound the run count.

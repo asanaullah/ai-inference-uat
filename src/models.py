@@ -90,10 +90,18 @@ class NodeSpec(BaseModel):
     component_validation: ComponentValidation = Field(alias="componentValidation")
 
 
+class ModelsStorageConfig(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    pvc: str
+
+
 class StorageConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     pvc: str
     base_path: str = Field(alias="basePath")
+    models: ModelsStorageConfig = Field(
+        default_factory=lambda: ModelsStorageConfig(pvc=""), alias="models"
+    )
 
 
 class ComplianceConfig(BaseModel):

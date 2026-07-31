@@ -67,3 +67,5 @@ spec:
   storage:
     pvc: uat-project-storage
     basePath: uat/results
+    models:
+      pvc: uat-models

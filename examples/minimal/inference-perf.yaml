@@ -1,0 +1,114 @@
+# Assisted by Claude Opus 4.6
+apiVersion: uat.openshift.io/v1
+kind: Test
+metadata:
+  name: inference-perf
+  version: v0.0.1
+  description: vLLM inference benchmarking with inference-perf (kubernetes-sigs)
+spec:
+  source:
+    ginkgo: inference-perf.go
+
+  dag:
+    - name: vllm-server
+      image: nvcr.io/nvidia/vllm:26.03-py3
+      service:
+        enabled: true
+        port: 8000
+        name: vllm-server
+        headless: true
+      command:
+        args:
+          - python
+          - -m
+          - vllm.entrypoints.openai.api_server
+        flags:
+          model: /models/ibm-granite/granite-3.3-8b-instruct
+          port: 8000
+          max-model-len: 10000
+          gpu-memory-utilization: 0.6
+      env:
+        - name: HOME
+          value: /tmp
+      ports:
+        - containerPort: 8000
+          name: http
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8000
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 30
+      resources:
+        requests:
+          nvidia.com/gpu: '1'
+        limits:
+          nvidia.com/gpu: '1'
+      persistsThroughSweep: true
+      parameterSweep: null
+
+    - name: pass-fail
+      image: quay.io/inference-perf/inference-perf:latest
+      labelFilter: pass-fail
+      env:
+        - name: HOME
+          value: /tmp
+        - name: SERVER_URL
+          value: '{{ services["vllm-server"].url }}'
+      persistsThroughSweep: false
+      parameterSweep: null
+
+    - name: sweep
+      image: quay.io/inference-perf/inference-perf:latest
+      labelFilter: quantitative
+      env:
+        - name: HOME
+          value: /tmp
+        - name: SERVER_URL
+          value: '{{ services["vllm-server"].url }}'
+        - name: SWEEP_COMMAND
+          value: '{{ paramSweep.command | toJson }}'
+      persistsThroughSweep: false
+      parameterSweep:
+        baseCommand:
+          args:
+            - inference-perf
+          flags:
+            server.type: vllm
+            server.base_url: '{{ services["vllm-server"].url }}'
+            server.model_name: /models/ibm-granite/granite-3.3-8b-instruct
+            server.ignore_eos: 'true'
+            api.type: completion
+            api.streaming: 'true'
+            data.type: random
+            data.input_distribution.min: 64
+            data.input_distribution.max: 256
+            data.input_distribution.mean: 128
+            data.input_distribution.std_dev: 32
+            data.output_distribution.min: 32
+            data.output_distribution.max: 128
+            data.output_distribution.mean: 64
+            data.output_distribution.std_dev: 16
+            load.type: constant
+            load.num_workers: 4
+            storage.local_storage.path: /uat_workspace
+            report.request_lifecycle.summary: 'true'
+            report.request_lifecycle.per_request: 'false'
+        entries:
+          - id: constant-low
+            description: Low-rate sanity check
+            flags:
+              load.stages: '[{"rate": 1, "duration": 30}]'
+
+          - id: constant-high
+            description: Higher sustained load
+            flags:
+              load.stages: '[{"rate": 10, "duration": 60}]'
+
+          - id: poisson-burst
+            description: Realistic Poisson arrival pattern
+            flags:
+              load.type: poisson
+              load.stages: '[{"rate": 5, "duration": 60}]'

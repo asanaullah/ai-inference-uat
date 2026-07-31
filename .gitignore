@@ -5,5 +5,5 @@ __pycache__/
 .pytest_cache/
 .claude/
 cluster/*.local.yaml
-setup/
+temp/
 TODO.md

@@ -43,9 +43,9 @@ var (
 	resultsDir string
 )
 
-func TestInference(t *testing.T) {
+func TestGuidellm(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Inference Server Test Suite")
+	RunSpecs(t, "guidellm Benchmark Suite")
 }
 
 var _ = BeforeSuite(func() {
@@ -102,9 +102,11 @@ var _ = Describe("vLLM Inference Server", func() {
 			cmd := exec.Command(sweepCmd[0], sweepCmd[1:]...)
 			cmd.Env = append(os.Environ(), "HOME=/tmp")
 
-			output, err := cmd.CombinedOutput()
-			GinkgoWriter.Printf("benchmark output:\n%s\n", string(output))
-			Expect(err).NotTo(HaveOccurred(), "benchmark failed: %s", string(output))
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+
+			err = cmd.Run()
+			Expect(err).NotTo(HaveOccurred(), "benchmark failed")
 		})
 
 		It("should generate result files", func() {
