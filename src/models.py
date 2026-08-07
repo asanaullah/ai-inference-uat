@@ -149,10 +149,29 @@ class ParameterSweep(BaseModel):
     entries: list[SweepEntry]
 
 
-class DAGStep(BaseModel):
+class SidecarContainer(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     name: str
     image: str
+    command: list[str] = []
+    args: list[str] = []
+    env: list[dict[str, Any]] = []
+    ports: list[dict[str, Any]] = []
+    resources: dict[str, Any] | None = None
+    volume_mounts: list[dict[str, Any]] = Field(default=[], alias="volumeMounts")
+
+
+class ResourceConfig(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    api_version: str = Field(alias="apiVersion")
+    kind: str
+    spec: dict[str, Any]
+
+
+class DAGStep(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    name: str
+    image: str = ""
     command: CommandConfig | None = None
     env: list[dict[str, Any]] = []
     service: ServiceConfig = Field(default_factory=ServiceConfig)
@@ -164,7 +183,11 @@ class DAGStep(BaseModel):
     persists_through_sweep: bool = Field(False, alias="persistsThroughSweep")
     parameter_sweep: ParameterSweep | None = Field(None, alias="parameterSweep")
     label_filter: str | None = Field(None, alias="labelFilter")
+    labels: dict[str, str] = {}
     privileged: bool = False
+    sidecars: list[SidecarContainer] = []
+    resource_config: ResourceConfig | None = Field(None, alias="resourceConfig")
+    service_account_name: str | None = Field(None, alias="serviceAccountName")
 
     @model_validator(mode="after")
     def _check_persist_sweep_exclusive(self) -> "DAGStep":
@@ -174,6 +197,28 @@ class DAGStep(BaseModel):
                 f"parameterSweep set — parameterSweep is only valid on "
                 f"non-persistent steps"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _check_resource_vs_pod(self) -> "DAGStep":
+        if self.resource_config:
+            if self.persists_through_sweep:
+                raise ValueError(
+                    f"DAG step '{self.name}' is a resource step and cannot "
+                    f"set persistsThroughSweep"
+                )
+            if self.parameter_sweep is not None:
+                raise ValueError(
+                    f"DAG step '{self.name}' is a resource step and cannot "
+                    f"set parameterSweep"
+                )
+            if self.sidecars:
+                raise ValueError(
+                    f"DAG step '{self.name}' is a resource step and cannot "
+                    f"have sidecars"
+                )
+        elif not self.image:
+            raise ValueError(f"DAG step '{self.name}' requires an image")
         return self
 
 

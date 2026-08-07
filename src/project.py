@@ -5,7 +5,12 @@ from typing import Any
 
 from jinja2 import Environment
 
-from .common import add_ephemeral_steps, add_persistent_steps, add_teardown_steps
+from .common import (
+    add_ephemeral_steps,
+    add_persistent_steps,
+    add_resource_steps,
+    add_teardown_steps,
+)
 from .models import LoadedTest, ModelsStorageConfig, Step, ToolConfig
 
 
@@ -25,9 +30,27 @@ def compute_project_steps(
 
     services: dict[str, dict[str, Any]] = {}
     has_persistent = False
+    extra_resource_types: set[str] = set()
 
     for dag_step in test.spec.dag:
-        if dag_step.persists_through_sweep:
+        if dag_step.resource_config:
+            has_persistent = True
+            extra_resource_types.add(dag_step.resource_config.kind)
+            add_resource_steps(
+                steps,
+                dag_step,
+                step_prefix,
+                res_prefix,
+                node="",
+                step_node="",
+                test=test,
+                tc=tool_config,
+                namespace=namespace,
+                services=services,
+                jinja_env=jinja_env,
+                scope=scope,
+            )
+        elif dag_step.persists_through_sweep:
             has_persistent = True
             add_persistent_steps(
                 steps,
@@ -74,6 +97,7 @@ def compute_project_steps(
         step_node="",
         test=test,
         scope=scope,
+        extra_resource_types=extra_resource_types,
     )
 
     return steps

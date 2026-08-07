@@ -397,6 +397,9 @@ def _render_tekton_task(
             {
                 **base_ctx,
                 "selector": config["selector"],
+                "resource_types": config.get(
+                    "resource_types", "pods,services,deployments"
+                ),
             },
         )
 

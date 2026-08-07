@@ -14,13 +14,65 @@ metadata:
 {% if chain is defined and chain %}
     chain: {{ chain }}
 {% endif %}
+{% for k, v in extra_labels.items() %}
+    {{ k }}: {{ v | yaml_quote }}
+{% endfor %}
 spec:
+{% if service_account_name is defined and service_account_name %}
+  serviceAccountName: {{ service_account_name }}
+{% endif %}
 {% if node %}
   nodeSelector:
     {{ node_selector_key }}: {{ node }}
 {% endif %}
 {% if privileged %}
   hostPID: true
+{% endif %}
+{% if sidecars is defined and sidecars %}
+  initContainers:
+{% for sc in sidecars %}
+    - name: {{ sc.name }}
+      image: {{ sc.image }}
+      restartPolicy: Always
+{% if sc.command %}
+      command:
+{% for c in sc.command %}
+        - {{ c | yaml_quote }}
+{% endfor %}
+{% endif %}
+{% if sc.args %}
+      args:
+{% for a in sc.args %}
+        - {{ a | yaml_quote }}
+{% endfor %}
+{% endif %}
+{% if sc.env %}
+      env:
+{% for e in sc.env %}
+        - name: {{ e.name }}
+{% if e.valueFrom is defined %}
+          valueFrom:
+{{ e.valueFrom | to_yaml | indent(12, first=True) }}
+{% else %}
+          value: {{ e.value | yaml_quote }}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if sc.ports %}
+      ports:
+{{ sc.ports | to_yaml | indent(8, first=True) }}
+{% endif %}
+{% if sc.resources %}
+      resources:
+{{ sc.resources | to_yaml | indent(8, first=True) }}
+{% endif %}
+{% if sc.volumeMounts %}
+      volumeMounts:
+{% for vm in sc.volumeMounts %}
+        - {{ vm | to_yaml | indent(10) }}
+{% endfor %}
+{% endif %}
+{% endfor %}
 {% endif %}
   containers:
     - name: {{ pod_name }}
@@ -35,7 +87,12 @@ spec:
       env:
 {% for e in env %}
         - name: {{ e.name }}
+{% if e.valueFrom is defined %}
+          valueFrom:
+{{ e.valueFrom | to_yaml | indent(12, first=True) }}
+{% else %}
           value: {{ e.value | yaml_quote }}
+{% endif %}
 {% endfor %}
 {% endif %}
 {% if ports %}

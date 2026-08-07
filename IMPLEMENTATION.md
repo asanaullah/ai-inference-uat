@@ -16,7 +16,7 @@ src/                     ← Python package (run with python -m src)
   │                         (load_steps_file) for steps.json round-tripping
   common.py              ← Jinja2 engine, manifest validation, config loading,
   │                         template context helpers, command building,
-  │                         persistent/ephemeral/teardown step rendering
+  │                         persistent/ephemeral/resource/teardown step rendering
   node.py                ← node-level step computation, DAG/test pod rendering,
   │                         requirement checks
   cluster.py             ← cluster-level step computation, placement resolution
@@ -119,17 +119,19 @@ Binaries are compiled once per test name and stored at `binaries/<test_name>/tes
 
 **Test steps**: per-test, with scope determining the execution pattern. Each scope has its own step computation function. All step names follow the unified naming convention: `<test_id>-<test>-<node>-<dag_step.name>` for node scope, `<test_id>-<test>-set<i>-<dag_step.name>` for cluster scope with multiple sets, `<test_id>-<test>-<dag_step.name>` for cluster scope with a single set or project scope, with `-<id>` appended for sweep entries. `<test_id>` is the 1-indexed position of the test in the `test_suite.yaml` list (not zero-padded). The same test can appear multiple times in the list (e.g. with different configs or failure policies), so `<test_id>` prevents collisions in resource names and results paths, while `<test_name>` provides readability. The common pattern across scopes:
 
-1. For each persistent DAG step: generate manifest (pod + optional service) + command to deploy and wait for readiness. Service names are prefixed with `svc-` for DNS-1035 compliance; service URL references in env vars and commands are rewritten to match
-2. For each non-persistent DAG step (one per sweep entry, or one if no sweep): generate manifest + command to run and poll for completion + command to delete pods, services, and deployments by sweep label. The `sweep` label value is the sweep entry's `id` for sweep steps, or the DAG step's `name` for non-sweep steps
-3. If test had persistent steps: command to tear down persistent resources
-4. command `<test_id>-<test>[-<node>|-set<i>]-finally-teardown` (delete by label, `finally_step=True`) — always generated for every test
+1. For each resource DAG step (has `resourceConfig`): generate manifest (arbitrary K8s resource rendered via `resource.yaml.j2`) + command to apply it. The resource type (e.g. `InferencePool`) is tracked and appended to the teardown resource type list
+2. For each persistent pod DAG step: generate manifest (pod + optional service) + command to deploy and wait for readiness. Service names are prefixed with `svc-` for DNS-1035 compliance; service URL references in env vars and commands are rewritten to match
+3. For each non-persistent pod DAG step (one per sweep entry, or one if no sweep): generate manifest + command to run and poll for completion + command to delete pods, services, and deployments by sweep label. The `sweep` label value is the sweep entry's `id` for sweep steps, or the DAG step's `name` for non-sweep steps
+4. If test had persistent or resource steps: command to tear down persistent resources (resource type list is `pods,services,deployments` plus any resource step types like `InferencePool`)
+5. command `<test_id>-<test>[-<node>|-set<i>]-finally-teardown` (delete by label, `finally_step=True`) — always generated for every test
 
 **Node scope** (`compute_node_steps` in `node.py`): steps are generated per-node, per-test. Labels include `node=<node>` for targeted cleanup.
 
-1. For each persistent DAG step: generate `<test_id>-<test>-<node>-<dag_step>` manifest (pod + optional service, joined with `---`) + command `<test_id>-<test>-<node>-<dag_step>` (apply, probe: wait-ready)
-2. For each non-persistent DAG step: generate manifest + command (apply, probe: poll-completed) + command `<test_id>-<test>-<node>-cleanup-<dag_step>[-<id>]` (delete by label)
-3. If test had persistent steps: command `<test_id>-<test>-<node>-teardown` (delete by label)
-4. command `<test_id>-<test>-<node>-finally-teardown` (delete by label, `finally_step=True`)
+1. For each resource DAG step: generate `<test_id>-<test>-<node>-<dag_step>` manifest (arbitrary K8s resource) + command (apply, probe: none)
+2. For each persistent pod DAG step: generate `<test_id>-<test>-<node>-<dag_step>` manifest (pod + optional service, joined with `---`) + command `<test_id>-<test>-<node>-<dag_step>` (apply, probe: wait-ready)
+3. For each non-persistent pod DAG step: generate manifest + command (apply, probe: poll-completed) + command `<test_id>-<test>-<node>-cleanup-<dag_step>[-<id>]` (delete by label)
+4. If test had persistent or resource steps: command `<test_id>-<test>-<node>-teardown` (delete by label)
+5. command `<test_id>-<test>-<node>-finally-teardown` (delete by label, `finally_step=True`)
 
 **Cluster scope** (`compute_cluster_steps` in `cluster.py`): placement is fully resolved during step computation. The function proceeds in three phases:
 
@@ -145,19 +147,21 @@ The `setSize` determines how nodeSelectors are assigned within each chain:
 
 - **`setSize > 1`**: the number of DAG steps must equal `setSize` — the generator validates this and aborts if they don't match. DAG step *i* gets a `nodeSelector` pinning it to node *i* of the set. This means different steps within the same chain run on different nodes (e.g., a server on node A, a client on node B). The lifecycle is the same (persistent deploy, ephemeral run, per-ephemeral cleanup, teardown, finally-teardown), but resources are distributed across the set's nodes rather than colocated.
 
-1. For each persistent DAG step: generate `<test_id>-<test>-[set<i>-]<dag_step>` manifest (pod + optional service) + command (apply, probe: wait-ready)
-2. For each non-persistent DAG step: generate manifest + command (apply, probe: poll-completed) + command `<test_id>-<test>-[set<i>-]cleanup-<dag_step>[-<id>]` (delete by label)
-3. If test had persistent steps: command `<test_id>-<test>-[set<i>-]teardown` (delete by label)
-4. command `<test_id>-<test>-[set<i>-]finally-teardown` (delete by label, `finally_step=True`)
+1. For each resource DAG step: generate `<test_id>-<test>-[set<i>-]<dag_step>` manifest (arbitrary K8s resource) + command (apply, probe: none)
+2. For each persistent pod DAG step: generate `<test_id>-<test>-[set<i>-]<dag_step>` manifest (pod + optional service) + command (apply, probe: wait-ready)
+3. For each non-persistent pod DAG step: generate manifest + command (apply, probe: poll-completed) + command `<test_id>-<test>-[set<i>-]cleanup-<dag_step>[-<id>]` (delete by label)
+4. If test had persistent or resource steps: command `<test_id>-<test>-[set<i>-]teardown` (delete by label)
+5. command `<test_id>-<test>-[set<i>-]finally-teardown` (delete by label, `finally_step=True`)
 
 The `setMappings` metadata (recording which nodes are in each set, keyed by `test_id`) is written to `steps.json` by `write_steps_file()` — useful for `random` selection where the chosen set is non-deterministic.
 
 **Project scope** (`compute_project_steps` in `project.py`): produces a single chain without node affinity. No placement resolution or node filtering — the function takes the test definition and generates steps directly, without iterating over nodes or sets. Pods are rendered without `nodeSelector`, so the Kubernetes scheduler places them freely. Step names follow the convention `<test_id>-<test>-<dag_step>`. Labels include only the test-level identifiers (no node or set labels), so cleanup targets all resources for the test. The step generation pattern is identical to a single node-scoped chain, minus the node segment in names and the `nodeSelector` in manifests.
 
-1. For each persistent DAG step: generate `<test_id>-<test>-<dag_step>` manifest (pod + optional service) + command (apply, probe: wait-ready)
-2. For each non-persistent DAG step: generate manifest + command (apply, probe: poll-completed) + command `<test_id>-<test>-cleanup-<dag_step>[-<id>]` (delete by label)
-3. If test had persistent steps: command `<test_id>-<test>-teardown` (delete by label)
-4. command `<test_id>-<test>-finally-teardown` (delete by label, `finally_step=True`)
+1. For each resource DAG step: generate `<test_id>-<test>-<dag_step>` manifest (arbitrary K8s resource) + command (apply, probe: none)
+2. For each persistent pod DAG step: generate `<test_id>-<test>-<dag_step>` manifest (pod + optional service) + command (apply, probe: wait-ready)
+3. For each non-persistent pod DAG step: generate manifest + command (apply, probe: poll-completed) + command `<test_id>-<test>-cleanup-<dag_step>[-<id>]` (delete by label)
+4. If test had persistent or resource steps: command `<test_id>-<test>-teardown` (delete by label)
+5. command `<test_id>-<test>-finally-teardown` (delete by label, `finally_step=True`)
 
 **Node name sanitization:** After loading the cluster config, the generator computes a sanitized version of each node name for use in Kubernetes resource names: invalid characters are replaced with dashes, uppercase is lowercased, and names longer than 16 characters are truncated to 12 characters with a 4-character hash suffix. The sanitized name is stored on `NodeSpec.sanitized_name` and used for pod names, service names, and Tekton task `metadata.name`. The original name is used for `nodeSelector`, labels, label selectors, manual script filenames, and PVC directory paths.
 
@@ -167,7 +171,7 @@ The `setMappings` metadata (recording which nodes are in each set, keyed by `tes
 
 1. Builds a minimal Jinja2 render context: `{"nodeSpec": node_spec_dict, "serverConfig": test.spec.server_config}`.
 2. For each DAG step with `resources.requests`, renders each value through Jinja2 to resolve template expressions (e.g., `{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}` → `4`).
-3. Classifies each DAG step as persistent (`persistsThroughSweep: true`) or ephemeral (default). Each ephemeral DAG step contributes one entry to the ephemeral demand list (sweep entries share the same resource requests, so they produce the same demand).
+3. Classifies each pod DAG step as persistent (`persistsThroughSweep: true`) or ephemeral (default). Resource steps (those with `resourceConfig`) are skipped — they don't produce pods and have no resource requests. Each ephemeral DAG step contributes one entry to the ephemeral demand list (sweep entries share the same resource requests, so they produce the same demand).
 4. Aggregates per resource type: `peak_demand = sum(persistent) + max(ephemeral)`. This represents the worst-case concurrent resource usage — all persistent resources are deployed simultaneously, plus the most resource-hungry ephemeral step.
 5. Looks up each Kubernetes resource type (e.g., `nvidia.com/gpu`) in the node's `componentValidation.sanity` dict (via `model_dump(by_alias=True)`). If the field exists and `peak_demand > capacity`, raises `ValueError` with the test name, node name, resource type, demand, and capacity. If the field doesn't exist for a resource type, that resource is not validated (capacity is unknown).
 6. Uses `parse_k8s_quantity()` in `common.py` to normalize both demand and capacity values to comparable numbers — handles Kubernetes quantity suffixes (`Ki`, `Mi`, `Gi`, `Ti` for binary; `m` for millicores; plain integers and floats).
@@ -350,8 +354,12 @@ Every parsed config field and where it takes effect. **This is the section to ch
 | `spec.dag[].command` | `DAGStep.command` | Structured command: `args` + `flags` → `["arg1", "--key=value"]`. Flags with a `None` value (YAML `~` or empty value) render as bare flags (`--key`). Both persistent and non-persistent steps render command args through the Jinja2 template context (`serverConfig`, `nodeSpec`, `services`, `node`, `timestamp`). Non-persistent steps additionally have `paramSweep` available |
 | `spec.dag[].labelFilter` | `DAGStep.label_filter` | If set, takes priority over `command`: generates a ginkgo command with `--ginkgo.label-filter=<value>` and `--ginkgo.junit-report=/uat_workspace/junit.xml`. Also auto-injects `RESULTS_DIR` env var if not already present |
 | `spec.dag[].parameterSweep` | `DAGStep.parameter_sweep` | If set: one test pod per `entries[]`. Each entry's `flags` are merged over `baseCommand.flags`. If null: single test pod using the step's own command |
-| `spec.dag[].env` | `DAGStep.env` | Env vars. Values are rendered through Jinja2 with the full template context |
+| `spec.dag[].env` | `DAGStep.env` | Env vars. Each entry has either a `value` (rendered through Jinja2) or a `valueFrom` (passed through as-is — supports fieldRef, secretKeyRef, configMapKeyRef) |
 | `spec.dag[].resources` | `DAGStep.resources` | Resource requests/limits. Values are rendered through Jinja2 with the full template context (`nodeSpec`, `serverConfig`, `services`, `node`, `timestamp`), so expressions like `{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}` work in both persistent and non-persistent steps. |
+| `spec.dag[].labels` | `DAGStep.labels` | Custom labels added to pod metadata (dict of key-value strings). Rendered after fixed labels so custom labels can override them |
+| `spec.dag[].sidecars` | `DAGStep.sidecars` | List of `SidecarContainer` specs. Rendered as `initContainers` with `restartPolicy: Always` (native K8s sidecar pattern). Each sidecar's `env`, `args`, `command`, and `resources` are rendered through Jinja2. Not allowed on resource steps |
+| `spec.dag[].resourceConfig` | `DAGStep.resource_config` | If set, the DAG step deploys an arbitrary Kubernetes resource instead of a pod. Contains `apiVersion`, `kind`, and `spec` (dict). The `spec` values are recursively rendered through Jinja2. Mutually exclusive with `persistsThroughSweep`, `parameterSweep`, and `sidecars`. When set, `image` is not required |
+| `spec.dag[].serviceAccountName` | `DAGStep.service_account_name` | If set, the generated pod runs under this service account. Rendered as `spec.serviceAccountName` in the pod manifest |
 | `spec.dag[].volumeMounts` | `DAGStep.volume_mounts` | Extra volume mounts added to the container. Must pair with `volumes` entries |
 | `spec.dag[].volumes` | `DAGStep.volumes` | Raw volume definitions (list of dicts). Rendered as-is via `to_yaml` filter. For test pods, these are in addition to the hardcoded PVC volume |
 | `spec.dag[].ports` | `DAGStep.ports` | Container ports |
@@ -548,6 +556,8 @@ Available in test YAML Jinja2 expressions (`command`, `env` values):
 | `services["name"]` | Service context from DAG steps with `service.enabled` | `{{ services["vllm-server"].url }}` |
 | `timestamp` | `__TIMESTAMP__` placeholder | Replaced at output time |
 | `node` | Node name | `wrk-4` |
+| `k8sNamePrefix` | Resource name prefix for the current step | `1-t-wrk-0` |
+| `namespace` | Target Kubernetes namespace | `uat-project` |
 
 
 ## Call Graph
@@ -609,9 +619,10 @@ main()
 |---|---|
 | `configmap.yaml.j2` | ConfigMap with all source files. Iterates over a `files` dict (filename → content), embedding each via `indent` filter. Labels with managed-by |
 | `support-pod.yaml.j2` | Builder and aggregator pods. Runs `sleep infinity`, mounts PVC at `/uat_workspace` with optional `subPath`, and optionally mounts a ConfigMap at `/src`. `restartPolicy: Never` |
-| `dag-pod.yaml.j2` | Persistent DAG pod manifest. Supports `nodeSelector`, `hostPID` + `privileged` mode, structured command with `yaml_quote`, env vars, ports, `readinessProbe`, resource requests/limits, extra `volumeMounts` and `volumes`, and hardcoded PVC mounts at `/uat_workspace` (subPath: step dir) and `/binaries` (subPath: binaries dir). When `models_storage` is set with a non-empty `pvc`, adds a read-only mount at `/models` from the models PVC. `restartPolicy: Never` |
+| `dag-pod.yaml.j2` | Persistent DAG pod manifest. Supports `nodeSelector`, `serviceAccountName`, `hostPID` + `privileged` mode, structured command with `yaml_quote`, env vars (both plain `value` and `valueFrom` references — fieldRef, secretKeyRef), ports, `readinessProbe`, resource requests/limits, extra `volumeMounts` and `volumes`, custom labels (`extra_labels`), sidecar containers (rendered as `initContainers` with `restartPolicy: Always` — native K8s sidecar pattern), and hardcoded PVC mounts at `/uat_workspace` (subPath: step dir) and `/binaries` (subPath: binaries dir). When `models_storage` is set with a non-empty `pvc`, adds a read-only mount at `/models` from the models PVC. `restartPolicy: Never` |
 | `dag-service.yaml.j2` | Kubernetes Service for DAG pods. Supports headless services (`clusterIP: None`). Labels: `test`, `dag-step`, `node`, `chain`, `sweep`. Selector matches pod labels for targeted routing |
-| `test-pod.yaml.j2` | Run-to-completion test pod manifest. Identical to `dag-pod.yaml.j2` except: always includes a `sweep` label (for targeted cleanup by the per-ephemeral cleanup step), and does not support `readinessProbe` (ephemeral pods are poll-completed, not wait-ready). Same conditional `/models` mount as `dag-pod.yaml.j2` |
+| `test-pod.yaml.j2` | Run-to-completion test pod manifest. Identical to `dag-pod.yaml.j2` except: always includes a `sweep` label (for targeted cleanup by the per-ephemeral cleanup step), and does not support `readinessProbe` (ephemeral pods are poll-completed, not wait-ready). Same conditional `/models` mount, `serviceAccountName`, `extra_labels`, sidecars, and `valueFrom` env support as `dag-pod.yaml.j2` |
+| `resource.yaml.j2` | Generic manifest for arbitrary Kubernetes resources. Renders `apiVersion`, `kind`, `metadata` (name, namespace, labels including managed-by, test, optional node and chain), and `spec` (rendered via `to_yaml`). Used by `add_resource_steps()` for resource DAG steps |
 
 | Template | Produces |
 |---|---|
@@ -627,7 +638,7 @@ main()
 | `task-apply-wait-ready.yaml.j2` | Applies an inline manifest via heredoc (`oc apply -f - <<'MANIFEST_EOF'`). If `wait_ready` is true, runs `oc wait --for=condition=Ready pod/<name> --timeout=<N>s` |
 | `task-exec.yaml.j2` | Runs `oc exec <target> -- <args \| shell_join>` |
 | `task-run-test-pod.yaml.j2` | Applies test pod manifest via heredoc, then polls with a deadline: checks `oc get pod -o jsonpath='{.status.phase}'` every 5s, exits 0 on `Succeeded`, exits 1 on `Failed` or timeout. Tails 50 lines of logs on failure |
-| `task-teardown.yaml.j2` | Runs `oc delete pods,services,deployments -l <selector> --ignore-not-found` |
+| `task-teardown.yaml.j2` | Runs `oc delete <resource_types> -l <selector> --ignore-not-found`. Resource types default to `pods,services,deployments` but include additional types (e.g. `InferencePool`) when resource steps are present |
 | `task-cleanup.yaml.j2` | Deletes all pods, services, deployments by managed-by label, plus the named ConfigMap. Each resource type deleted separately with `--ignore-not-found` |
 
 **Manual script templates** (derived from command step config by the manual writer):
@@ -636,7 +647,7 @@ main()
 |---|---|
 | `apply-script.sh.j2` | Three code paths based on `probe`. **`none`**: `oc apply -f <manifest>`. **`wait-ready`**: apply, then `oc wait --for=condition=Ready --timeout=<N>s`, then tail 10 lines of logs. **`poll-completed`**: apply, poll until pod starts (Running/Succeeded/Failed), stream logs with `oc logs -f`, then check terminal phase — if still running after logs end, poll with a deadline (5s interval) until Succeeded/Failed/timeout |
 | `exec-script.sh.j2` | `oc exec <target> -- <args \| shell_join>` |
-| `teardown-script.sh.j2` | `oc delete pods,services,deployments -l <selector> --ignore-not-found` |
+| `teardown-script.sh.j2` | `oc delete <resource_types> -l <selector> --ignore-not-found`. Resource types default to `pods,services,deployments` but include additional types when resource steps are present |
 | `cleanup-script.sh.j2` | Deletes all pods, services, deployments by managed-by label, plus the named ConfigMap |
 
 ## Pydantic Model Reference
@@ -645,7 +656,9 @@ main()
 |---|---|---|
 | `TestSuite` | `test_suite.yaml` | `spec.tests[]` — ordered list of `TestEntry` (name, scope, onFailure, timeout, placement, spec) |
 | `Test` | `<test>.yaml` | `spec.dag[]`, `spec.source`, `spec.serverConfig` |
-| `DAGStep` | nested in `Test` | `name`, `image`, `command`, `env`, `service`, `ports`, `readinessProbe`, `resources`, `volumeMounts`, `volumes`, `privileged`, `persistsThroughSweep`, `parameterSweep`, `labelFilter`. **Model validator:** `persistsThroughSweep` and `parameterSweep` are mutually exclusive — setting both raises `ValueError` (a persistent step cannot have its own sweep) |
+| `DAGStep` | nested in `Test` | `name`, `image` (optional — defaults to `""`, required for pod steps but not resource steps), `command`, `env`, `service`, `ports`, `readinessProbe`, `resources`, `volumeMounts`, `volumes`, `privileged`, `persistsThroughSweep`, `parameterSweep`, `labelFilter`, `labels` (custom pod labels dict), `sidecars` (list of `SidecarContainer`), `resourceConfig` (`ResourceConfig`, mutually exclusive with pod-step fields), `serviceAccountName`. **Model validators:** (1) `persistsThroughSweep` and `parameterSweep` are mutually exclusive — setting both raises `ValueError`. (2) `_check_resource_vs_pod` — resource steps (those with `resourceConfig`) reject `persistsThroughSweep`, `parameterSweep`, and `sidecars`; pod steps (no `resourceConfig`) require a non-empty `image` |
+| `SidecarContainer` | nested in `DAGStep` | `name`, `image`, `command`, `args`, `env`, `ports`, `resources`, `volumeMounts`. Rendered as init containers with `restartPolicy: Always` (native K8s sidecar pattern) |
+| `ResourceConfig` | nested in `DAGStep` | `apiVersion`, `kind`, `spec` (dict). Defines an arbitrary Kubernetes resource to deploy as part of the DAG |
 | `ParameterSweep` | nested in `DAGStep` | `baseCommand.{args,flags}`, `entries[].{id,description,flags}` |
 | `ClusterTest` | `cluster/*.yaml` | `spec.nodes[]`, `spec.namespace`, `spec.storage.{pvc,basePath,models}`, `spec.compliance` |
 | `ModelsStorageConfig` | nested in `StorageConfig` | `pvc` — PVC name for model weights. When non-empty, all DAG pods get a read-only mount at `/models`. Designed as a separate model so the backing store can be extended beyond PVC |
@@ -676,7 +689,7 @@ Additionally, `load_steps_file()` in `step_generator.py` validates that `metadat
 
 ## Resource Validation
 
-For node-scoped and cluster-scoped tests, `validate_node_resources` in `common.py` computes peak concurrent resource demand per target node (sum of persistent + max of ephemeral DAG step resource requests) and compares against the node's `componentValidation.sanity` fields. Sanity dict keys use actual Kubernetes resource names (e.g. `nvidia.com/gpu`, `cpu`, `memory`) so they match resource requests directly. The generator aborts with an error if any resource type demand exceeds the node's declared capacity. This catches over-subscription (e.g., two GPU-hungry DAG steps on a 4-GPU node) at generation time. Project-scoped tests skip this check — pods have no specific target nodes.
+For node-scoped and cluster-scoped tests, `validate_node_resources` in `common.py` computes peak concurrent resource demand per target node (sum of persistent + max of ephemeral DAG step resource requests) and compares against the node's `componentValidation.sanity` fields. Resource steps (those with `resourceConfig`) are excluded — they don't produce pods and have no resource requests. Sanity dict keys use actual Kubernetes resource names (e.g. `nvidia.com/gpu`, `cpu`, `memory`) so they match resource requests directly. The generator aborts with an error if any resource type demand exceeds the node's declared capacity. This catches over-subscription (e.g., two GPU-hungry DAG steps on a 4-GPU node) at generation time. Project-scoped tests skip this check — pods have no specific target nodes.
 
 For cluster-scoped tests, `setRequirements` in the placement config filters nodes by comparing requirement values against the sanity dict. Numeric values check `>=`, string values check exact match.
 

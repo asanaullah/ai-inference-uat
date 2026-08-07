@@ -146,6 +146,9 @@ def _derive_manual_script(step: Step, jinja_env: Environment) -> str | None:
             "teardown-script.sh.j2",
             {
                 "selector": config["selector"],
+                "resource_types": config.get(
+                    "resource_types", "pods,services,deployments"
+                ),
             },
         )
     elif cmd == "delete-all":

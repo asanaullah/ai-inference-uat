@@ -12,6 +12,7 @@ spec:
       componentValidation:
         sanity:
           nvidia.com/gpu: 4
+          nvidia.com/gpu.memory: 81559
           cpu: 192
           resourceNames:
             nvidia.com/gpu: NVIDIA-H100-80GB-HBM3
@@ -39,6 +40,7 @@ spec:
       componentValidation:
         sanity:
           nvidia.com/gpu: 2
+          nvidia.com/gpu.memory: 40960
           cpu: 128
           resourceNames:
             nvidia.com/gpu: NVIDIA-A100-SXM4-40GB

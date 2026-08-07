@@ -5,7 +5,12 @@ from typing import Any
 
 from jinja2 import Environment
 
-from .common import add_ephemeral_steps, add_persistent_steps, add_teardown_steps
+from .common import (
+    add_ephemeral_steps,
+    add_persistent_steps,
+    add_resource_steps,
+    add_teardown_steps,
+)
 from .models import LoadedTest, ModelsStorageConfig, NodeSpec, Step, ToolConfig
 
 
@@ -26,12 +31,31 @@ def compute_node_steps(
 
     services: dict[str, dict[str, Any]] = {}
     has_persistent = False
+    extra_resource_types: set[str] = set()
 
     step_prefix = f"{test.test_id}-{test.name}-{node}"
     res_prefix = f"{test.test_id}-{test.name}-{safe_node}"
 
     for dag_step in test.spec.dag:
-        if dag_step.persists_through_sweep:
+        if dag_step.resource_config:
+            has_persistent = True
+            extra_resource_types.add(dag_step.resource_config.kind)
+            add_resource_steps(
+                steps,
+                dag_step,
+                step_prefix,
+                res_prefix,
+                node=node,
+                step_node=node,
+                test=test,
+                tc=tool_config,
+                namespace=namespace,
+                services=services,
+                jinja_env=jinja_env,
+                scope="node",
+                node_spec_dict=node_spec_dict,
+            )
+        elif dag_step.persists_through_sweep:
             has_persistent = True
             add_persistent_steps(
                 steps,
@@ -81,6 +105,7 @@ def compute_node_steps(
         step_node=node,
         test=test,
         scope="node",
+        extra_resource_types=extra_resource_types,
     )
 
     return steps

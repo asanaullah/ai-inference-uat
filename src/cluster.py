@@ -10,6 +10,7 @@ from jinja2 import Environment
 from .common import (
     add_ephemeral_steps,
     add_persistent_steps,
+    add_resource_steps,
     add_teardown_steps,
     render_string,
     validate_node_resources,
@@ -192,6 +193,7 @@ def _generate_set_steps(
 
     services: dict[str, dict[str, Any]] = {}
     has_persistent = False
+    extra_resource_types: set[str] = set()
     scope = "cluster"
 
     for dag_idx, dag_step in enumerate(test.spec.dag):
@@ -203,7 +205,26 @@ def _generate_set_steps(
         node = target_node.name
         node_spec_dict = target_node.model_dump(by_alias=True)
 
-        if dag_step.persists_through_sweep:
+        if dag_step.resource_config:
+            has_persistent = True
+            extra_resource_types.add(dag_step.resource_config.kind)
+            add_resource_steps(
+                steps,
+                dag_step,
+                step_prefix,
+                res_prefix,
+                node=node,
+                step_node=set_key,
+                test=test,
+                tc=tc,
+                namespace=namespace,
+                services=services,
+                jinja_env=jinja_env,
+                scope=scope,
+                node_spec_dict=node_spec_dict,
+                chain=set_key,
+            )
+        elif dag_step.persists_through_sweep:
             has_persistent = True
             add_persistent_steps(
                 steps,
@@ -257,4 +278,5 @@ def _generate_set_steps(
         step_node=set_key,
         test=test,
         scope=scope,
+        extra_resource_types=extra_resource_types,
     )

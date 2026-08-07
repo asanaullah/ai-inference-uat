@@ -15,5 +15,5 @@ spec:
       image: {{ ose_cli_image }}
       script: |
         echo "Tearing down resources with selector: {{ selector }}"
-        oc delete pods,services,deployments -l {{ selector }} --ignore-not-found
+        oc delete {{ resource_types }} -l {{ selector }} --ignore-not-found
         echo "Teardown complete"

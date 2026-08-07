@@ -59,7 +59,7 @@ Test Definitions (YAML + Go) + Node List → python -m src → Steps ──┤  
 
 The generator separates step computation (what to run) from writers (how to run it). Writers are independent consumers of the same step list, so adding a new execution backend means writing a new writer — step computation doesn't change.
 
-1. **Step computation** — converts test definitions into a flat, ordered list of steps. Each step is either a resource to create (pod manifest, optionally bundled with a service) or an action to execute (apply a manifest, exec into a pod, delete resources). Ordering is implicit in list position. Both output layers consume the same step list.
+1. **Step computation** — converts test definitions into a flat, ordered list of steps. Each step is either a resource to create (pod manifest, optionally bundled with a service, or an arbitrary Kubernetes resource manifest) or an action to execute (apply a manifest, exec into a pod, delete resources). Ordering is implicit in list position. Both output layers consume the same step list.
 
 2. **Manual writer** — writes the steps as standalone files to `build/manual/`, organized by phase (setup, test, teardown). Numbered `.sh` scripts in `manual/` are what the operator runs in order. Manifests are written to `manual/manifests/` as data files — each apply script references its manifest via `oc apply -f manifests/<name>.yaml`.
 
@@ -104,9 +104,10 @@ Each test produces one or more task chains depending on scope: one per node (nod
 
 ```
 Task chain per node:
+  resource:   apply arbitrary K8s resource (e.g. InferencePool)
   persistent: deploy pod, wait for readiness (stays up)
   ephemeral:  run test pod → cleanup (per sweep entry, releases resources)
-  after all DAG steps: teardown persistent pods
+  after all DAG steps: teardown persistent + resource-step resources
   finally-teardown: safety-net (always runs, no when guard)
 Guard task: fans in after all nodes' chains, checks for failures
 ```
@@ -203,9 +204,10 @@ DAG pods also get a second mount at `/binaries` for access to compiled test bina
 
 The `setup/` directory contains Kubernetes manifests for one-time cluster preparation:
 
-- **`namespaces-and-pvcs.yaml`** — creates the `uat-project` namespace, a 100Gi RWX PVC for test results (`uat-project-storage`), and RBAC (Role + RoleBinding) granting the test user access to pods, services, configmaps, and workload APIs.
+- **`namespaces-and-pvcs.yaml`** — creates the `uat-project` namespace, a 100Gi RWX PVC for test results (`uat-project-storage`), and RBAC (Role + RoleBinding) granting the test user access to pods, services, configmaps, workload APIs, and inference networking resources (InferencePools). Also creates service accounts for specialized access: `uat-monitoring-sa` (read-only access to InferencePools, InferenceObjectives, InferenceModelRewrites, and pods) and `uat-log-reader` (read-only access to pod logs).
 - **`uat-models-pvc.yaml`** — creates a 500Gi RWX PVC (`uat-models`) for pre-downloaded model weights.
 - **`model-downloader.yaml`** — a one-shot pod that downloads HuggingFace models to the models PVC. Add models to the `MODELS` list and re-run.
+- **`sanity_scan.py`** — a CLI tool that launches scanner pods on cluster nodes, scans hardware (GPU, CPU, memory, NUMA, InfiniBand, cpuset), and merges detected values into a cluster YAML's sanity block. Run with `python3 setup/sanity_scan.py --cluster cluster/ocp-test.yaml`.
 
 Apply in order:
 
@@ -394,24 +396,28 @@ The generated output compiles `my-test.go` into a binary on the builder pod and 
 
 ### DAG Steps
 
-Each test defines an ordered DAG of resources to deploy and run. Steps are either **persistent** (stay up for all sweep entries) or **ephemeral** (run once per sweep entry and exit). Ephemeral pods are cleaned up immediately after completion to release resources (e.g. GPUs) for subsequent steps. Each ephemeral pod carries a `sweep` label matching its sweep entry ID, enabling targeted deletion without affecting persistent pods. Persistent pods are torn down after all DAG steps complete.
+Each test defines an ordered DAG of resources to deploy and run. DAG steps come in two flavors: **pod steps** and **resource steps**. Pod steps are either **persistent** (stay up for all sweep entries) or **ephemeral** (run once per sweep entry and exit). Ephemeral pods are cleaned up immediately after completion to release resources (e.g. GPUs) for subsequent steps. Each ephemeral pod carries a `sweep` label matching its sweep entry ID, enabling targeted deletion without affecting persistent pods. Persistent pods are torn down after all DAG steps complete. **Resource steps** deploy arbitrary Kubernetes resources (e.g. InferencePools, ConfigMaps) as part of the DAG — they declare a `resourceConfig` instead of an image.
 
 | Field | Description |
 |---|---|
-| `name` | Step name, used in pod naming and directory hierarchy |
-| `image` | Container image |
-| `persistsThroughSweep` | `true`: pod stays up (e.g. inference server). `false`: pod runs to completion |
+| `name` | Step name, used in pod/resource naming and directory hierarchy |
+| `image` | Container image (required for pod steps, omitted for resource steps) |
+| `persistsThroughSweep` | `true`: pod stays up (e.g. inference server). `false`: pod runs to completion. Pod steps only |
 | `labelFilter` | Ginkgo label filter for the compiled binary |
 | `command` | Structured command with `args` and `flags` |
-| `parameterSweep` | If set, one pod per entry with merged flags |
+| `parameterSweep` | If set, one pod per entry with merged flags. Pod steps only |
 | `service` | Service configuration block (see [DAG Pods with Services](#dag-pods-with-services)). Fields: `enabled` (bool, default `false`), `name` (string, used in `services["name"]` template lookups), `port` (int, default `8000`), `headless` (bool, default `true` — sets `clusterIP: None`) |
-| `env` | Environment variables (values are Jinja2 templates) |
+| `env` | Environment variables. Each entry has either a `value` (Jinja2 template) or a `valueFrom` (passed through as-is — supports `fieldRef`, `secretKeyRef`, `configMapKeyRef`) |
 | `resources` | CPU/GPU/memory requests and limits |
 | `readinessProbe` | Readiness probe for persistent pods |
 | `ports` | Container ports |
 | `privileged` | If `true`, runs with `securityContext.privileged` and `hostPID` |
 | `volumeMounts` | Additional volume mounts (beyond the PVC) |
 | `volumes` | Additional volume definitions |
+| `labels` | Custom labels added to pod metadata (dict of key-value strings) |
+| `sidecars` | List of sidecar containers. Rendered as `initContainers` with `restartPolicy: Always` (native K8s sidecar pattern). Each sidecar has `name`, `image`, `command`, `args`, `env`, `ports`, `resources`, `volumeMounts` |
+| `resourceConfig` | Deploys an arbitrary K8s resource instead of a pod. Contains `apiVersion`, `kind`, and `spec` (dict with Jinja2-rendered values). Mutually exclusive with `persistsThroughSweep`, `parameterSweep`, and `sidecars` |
+| `serviceAccountName` | Service account for the generated pod |
 
 ### Template Variables
 
@@ -426,6 +432,8 @@ Available in `command`, `env`, and `resources` values via Jinja2:
 | `paramSweep.command` | Resolved command list for the current sweep entry |
 | `timestamp` | Run identifier (`__TIMESTAMP__` placeholder) |
 | `node` | Target node name |
+| `k8sNamePrefix` | Resource name prefix for the current step |
+| `namespace` | Target Kubernetes namespace |
 
 ### Parameter Sweeps
 
@@ -640,6 +648,82 @@ spec:
           model: '{{ serverConfig.model }}'
 ```
 
+### Resource Steps (Arbitrary K8s Resources)
+
+DAG steps can deploy arbitrary Kubernetes resources (not just pods) by using `resourceConfig` instead of `image`. This is useful for deploying InferencePools, ConfigMaps, or any CRD as part of the test DAG:
+
+```yaml
+dag:
+  - name: inference-pool
+    resourceConfig:
+      apiVersion: inference.networking.k8s.io/v1
+      kind: InferencePool
+      spec:
+        selector:
+          matchLabels:
+            llm-d.ai/role: prefill
+        targetPortNumber: 8000
+```
+
+Resource steps are applied with `oc apply` and the resource type (e.g. `InferencePool`) is automatically added to the teardown resource type list so cleanup catches them. The `spec` values support Jinja2 templates (e.g. `{{ services["epp"].url }}`). Resource steps cannot use `persistsThroughSweep`, `parameterSweep`, or `sidecars`.
+
+### Sidecar Containers
+
+Pod DAG steps can include sidecar containers that run alongside the main container. Sidecars are rendered as Kubernetes native sidecar init containers (`restartPolicy: Always`):
+
+```yaml
+dag:
+  - name: vllm-server
+    image: nvcr.io/nvidia/vllm:26.03-py3
+    persistsThroughSweep: true
+    sidecars:
+      - name: routing-proxy
+        image: ghcr.io/llm-d/sidecar:main
+        args: ["--port=8000", "--vllm-port=8200"]
+        ports:
+          - containerPort: 8000
+        env:
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+```
+
+Sidecar `env`, `args`, `command`, and `resources` values are rendered through Jinja2 (e.g. `--tp={{ nodeSpec.componentValidation.sanity['nvidia.com/gpu'] }}`).
+
+### Environment Variables with valueFrom
+
+Env vars support both plain `value` (Jinja2 template) and Kubernetes `valueFrom` references. Use `valueFrom` to inject pod metadata or secret values:
+
+```yaml
+env:
+  - name: POD_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.podIP
+  - name: HF_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: llm-d-hf-token
+        key: HF_TOKEN
+  - name: MODEL
+    value: '{{ serverConfig.model }}'
+```
+
+### Service Account and Custom Labels
+
+DAG steps can specify a `serviceAccountName` and custom `labels`:
+
+```yaml
+dag:
+  - name: vllm-server
+    image: nvcr.io/nvidia/vllm:26.03-py3
+    serviceAccountName: uat-monitoring-sa
+    labels:
+      llm-d.ai/role: prefill
+      app: vllm
+```
+
 ### Arbitrary Kubernetes Configuration in DAG Steps
 
 DAG steps accept arbitrary dicts for `volumeMounts`, `volumes`, `env`, `ports`, `resources`, and `readinessProbe`. These map directly to Kubernetes pod spec fields, so you can mount secrets, define custom probes, or request specialized hardware without modifying the generator:
@@ -761,7 +845,7 @@ src/
   node.py             Node-level step computation, DAG pod rendering
   cluster.py          Cluster-level step computation, placement resolution
   project.py          Project-level step computation (single chain, no node affinity)
-  common.py           Jinja2 engine, manifest validation, config loading
+  common.py           Jinja2 engine, manifest validation, resource step rendering
   models.py           Pydantic schemas and dataclasses
   writers/
     manual.py         Manual writer (numbered shell scripts + YAML manifests)
@@ -769,8 +853,13 @@ src/
 tests/                Unit and integration tests
 scripts/
   aggregate.py        JUnit XML aggregation (deployed via ConfigMap)
+setup/
+  namespaces-and-pvcs.yaml  Namespaces, PVCs, RBAC, and inference networking
+  sanity_scan.py            CLI tool: launches scanner pods, scans hardware (GPU, CPU,
+                            memory, NUMA, InfiniBand, cpuset), merges into cluster YAML
 templates/
   *.yaml.j2           Jinja2 templates for Kubernetes/Tekton manifests
+  resource.yaml.j2    Generic template for arbitrary K8s resources (resource steps)
   *.sh.j2             Jinja2 templates for shell scripts
 examples/
   minimal/            Example test suite (test definitions, Go source)

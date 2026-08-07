@@ -1,0 +1,17 @@
+# Assisted by Claude Opus 4.6
+apiVersion: {{ api_version }}
+kind: {{ kind }}
+metadata:
+  name: {{ resource_name }}
+  namespace: {{ namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ managed_by_label }}
+    test: {{ test }}
+{% if node %}
+    node: {{ node }}
+{% endif %}
+{% if chain is defined and chain %}
+    chain: {{ chain }}
+{% endif %}
+spec:
+{{ spec | to_yaml | indent(2, first=True) }}

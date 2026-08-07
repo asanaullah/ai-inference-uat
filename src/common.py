@@ -309,6 +309,9 @@ def sanitize_node_name(name: str) -> str:
     return f"{sanitized[:12]}-{h}"
 
 
+_DEFAULT_RESOURCE_TYPES = "pods,services,deployments"
+
+
 def add_teardown_steps(
     steps: list[Step],
     has_persistent: bool,
@@ -318,7 +321,12 @@ def add_teardown_steps(
     step_node: str,
     test: LoadedTest,
     scope: str,
+    extra_resource_types: set[str] | None = None,
 ) -> None:
+    resource_types = _DEFAULT_RESOURCE_TYPES
+    if extra_resource_types:
+        resource_types += "," + ",".join(sorted(extra_resource_types))
+
     if has_persistent:
         steps.append(
             Step(
@@ -328,6 +336,7 @@ def add_teardown_steps(
                     "command": "delete",
                     "probe": "none",
                     "selector": selector,
+                    "resource_types": resource_types,
                 },
                 resource_name=f"{res_prefix}-teardown",
                 node=step_node,
@@ -347,6 +356,7 @@ def add_teardown_steps(
                 "command": "delete",
                 "probe": "none",
                 "selector": selector,
+                "resource_types": resource_types,
             },
             resource_name=f"{res_prefix}-finally-teardown",
             node=step_node,
@@ -366,12 +376,16 @@ def _build_render_ctx(
     test: LoadedTest,
     services: dict,
     node_spec_dict: dict | None = None,
+    res_prefix: str = "",
+    namespace: str = "",
 ) -> dict[str, Any]:
     ctx: dict[str, Any] = {
         "timestamp": "__TIMESTAMP__",
         "node": node,
         "serverConfig": test.spec.server_config,
         "services": services,
+        "k8sNamePrefix": res_prefix,
+        "namespace": namespace,
     }
     if node_spec_dict is not None:
         ctx["nodeSpec"] = node_spec_dict
@@ -424,6 +438,100 @@ def render_resources(
     return result
 
 
+def _render_nested_strings(
+    value: Any,
+    ctx: dict[str, Any],
+    jinja_env: Environment,
+) -> Any:
+    if isinstance(value, str):
+        return render_string(jinja_env, value, ctx)
+    if isinstance(value, dict):
+        return {k: _render_nested_strings(v, ctx, jinja_env) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_render_nested_strings(item, ctx, jinja_env) for item in value]
+    return value
+
+
+def add_resource_steps(
+    steps: list[Step],
+    dag_step: DAGStep,
+    step_prefix: str,
+    res_prefix: str,
+    node: str,
+    step_node: str,
+    test: LoadedTest,
+    tc: ToolConfig,
+    namespace: str,
+    services: dict,
+    jinja_env: Environment,
+    scope: str,
+    node_spec_dict: dict | None = None,
+    chain: str = "",
+) -> None:
+    rc = dag_step.resource_config
+    step_name = f"{step_prefix}-{dag_step.name}"
+    resource_name = f"{res_prefix}-{dag_step.name}"
+
+    render_ctx = _build_render_ctx(
+        node,
+        test,
+        services,
+        node_spec_dict,
+        res_prefix=res_prefix,
+        namespace=namespace,
+    )
+    rendered_spec = _render_nested_strings(rc.spec, render_ctx, jinja_env)
+
+    tmpl_ctx: dict[str, Any] = {
+        "api_version": rc.api_version,
+        "kind": rc.kind,
+        "resource_name": resource_name,
+        "namespace": namespace,
+        "managed_by_label": tc.managed_by_label,
+        "test": test.name,
+        "node": node,
+        "spec": rendered_spec,
+    }
+    if chain:
+        tmpl_ctx["chain"] = chain
+
+    content = render_manifest(jinja_env, "resource.yaml.j2", tmpl_ctx)
+
+    steps.append(
+        Step(
+            name=step_name,
+            type="generate",
+            config={"output": "manifest"},
+            content=content,
+            resource_name=resource_name,
+            node=step_node,
+            test=test.name,
+            test_id=test.test_id,
+            on_failure=test.on_failure,
+            scope=scope,
+            phase="test",
+        )
+    )
+    steps.append(
+        Step(
+            name=step_name,
+            type="command",
+            config={
+                "command": "apply",
+                "probe": "none",
+            },
+            source=[step_name],
+            resource_name=resource_name,
+            node=step_node,
+            test=test.name,
+            test_id=test.test_id,
+            on_failure=test.on_failure,
+            scope=scope,
+            phase="test",
+        )
+    )
+
+
 def add_persistent_steps(
     steps: list[Step],
     dag_step: DAGStep,
@@ -446,7 +554,14 @@ def add_persistent_steps(
     step_name = f"{step_prefix}-{dag_step.name}"
     pod_name = f"{res_prefix}-{dag_step.name}"
 
-    render_ctx = _build_render_ctx(node, test, services, node_spec_dict)
+    render_ctx = _build_render_ctx(
+        node,
+        test,
+        services,
+        node_spec_dict,
+        res_prefix=res_prefix,
+        namespace=namespace,
+    )
 
     command = None
     if dag_step.command:
@@ -465,6 +580,24 @@ def add_persistent_steps(
 
     workspace_subpath = f"{base_path}/__TIMESTAMP__/{step_name}"
     binaries_subpath = f"{base_path}/__TIMESTAMP__/binaries"
+
+    rendered_sidecars = []
+    for sc in dag_step.sidecars:
+        sc_dict = sc.model_dump(by_alias=True)
+        sc_dict["env"] = render_env(sc.env, render_ctx, jinja_env)
+        if sc.resources:
+            sc_dict["resources"] = render_resources(
+                sc.resources,
+                render_ctx,
+                jinja_env,
+            )
+        sc_dict["args"] = [
+            render_string(jinja_env, str(a), render_ctx) for a in sc.args
+        ]
+        sc_dict["command"] = [
+            render_string(jinja_env, str(c), render_ctx) for c in sc.command
+        ]
+        rendered_sidecars.append(sc_dict)
 
     pod_ctx: dict[str, Any] = {
         "pod_name": pod_name,
@@ -487,6 +620,9 @@ def add_persistent_steps(
         "workspace_subpath": workspace_subpath,
         "binaries_subpath": binaries_subpath,
         "models_storage": models_storage,
+        "extra_labels": dag_step.labels,
+        "sidecars": rendered_sidecars,
+        "service_account_name": dag_step.service_account_name,
     }
     if chain:
         pod_ctx["chain"] = chain
@@ -606,7 +742,14 @@ def add_ephemeral_steps(
         workspace_subpath = f"{base_path}/__TIMESTAMP__/{step_name}"
         binaries_subpath = f"{base_path}/__TIMESTAMP__/binaries"
 
-        render_ctx = _build_render_ctx(node, test, services, node_spec_dict)
+        render_ctx = _build_render_ctx(
+            node,
+            test,
+            services,
+            node_spec_dict,
+            res_prefix=res_prefix,
+            namespace=namespace,
+        )
 
         if has_sweep:
             args = dag_step.parameter_sweep.base_command.args
@@ -654,6 +797,24 @@ def add_ephemeral_steps(
             else None
         )
 
+        rendered_sidecars = []
+        for sc in dag_step.sidecars:
+            sc_dict = sc.model_dump(by_alias=True)
+            sc_dict["env"] = render_env(sc.env, full_ctx, jinja_env)
+            if sc.resources:
+                sc_dict["resources"] = render_resources(
+                    sc.resources,
+                    full_ctx,
+                    jinja_env,
+                )
+            sc_dict["args"] = [
+                render_string(jinja_env, str(a), full_ctx) for a in sc.args
+            ]
+            sc_dict["command"] = [
+                render_string(jinja_env, str(c), full_ctx) for c in sc.command
+            ]
+            rendered_sidecars.append(sc_dict)
+
         pod_ctx: dict[str, Any] = {
             "pod_name": pod_name,
             "namespace": namespace,
@@ -675,6 +836,9 @@ def add_ephemeral_steps(
             "workspace_subpath": workspace_subpath,
             "binaries_subpath": binaries_subpath,
             "models_storage": models_storage,
+            "extra_labels": dag_step.labels,
+            "sidecars": rendered_sidecars,
+            "service_account_name": dag_step.service_account_name,
         }
         if chain:
             pod_ctx["chain"] = chain
