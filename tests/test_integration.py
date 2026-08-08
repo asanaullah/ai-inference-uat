@@ -1,4 +1,4 @@
-"""End-to-end integration tests using examples/minimal."""
+"""End-to-end integration tests using examples/all_tests.yaml and test_lib."""
 
 import json
 import subprocess
@@ -15,9 +15,9 @@ def build_dir(tmp_path):
             "-m",
             "src",
             "--test-suite",
-            "examples/minimal/test_suite.yaml",
+            "examples/all_tests.yaml",
             "--test-lib",
-            "examples/minimal",
+            "test_lib",
             "--cluster",
             "cluster/ocp-test.yaml",
             "--config",

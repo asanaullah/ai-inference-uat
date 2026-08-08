@@ -1,0 +1,110 @@
+# Assisted by Claude Opus 4.6
+apiVersion: uat.openshift.io/v1
+kind: Test
+metadata:
+  name: chunked-prefill
+  version: v0.1.0
+  description: >-
+    Single vLLM instance using all node GPUs with chunked prefill enabled.
+    Validates TP across all GPUs and NVLink utilization during inference.
+spec:
+  source:
+    ginkgo: chunked-prefill.go
+
+  serverConfig:
+    model: /models/ibm-granite/granite-3.3-8b-instruct
+
+  dag:
+    - name: vllm-server
+      image: ghcr.io/llm-d/llm-d-cuda:v0.8.0
+      service:
+        enabled: true
+        port: 8000
+        name: vllm-server
+        headless: true
+      command:
+        args:
+          - python
+          - -m
+          - vllm.entrypoints.openai.api_server
+        flags:
+          model: '{{ serverConfig.model }}'
+          port: 8000
+          tensor-parallel-size: '{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}'
+          enable-chunked-prefill: ~
+      env:
+        - name: HOME
+          value: /tmp
+      ports:
+        - containerPort: 8000
+          name: http
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8000
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 30
+      resources:
+        requests:
+          nvidia.com/gpu: '{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}'
+        limits:
+          nvidia.com/gpu: '{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}'
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
+      volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+      persistsThroughSweep: true
+
+    - name: pass-fail
+      image: registry.redhat.io/ubi9/ubi:latest
+      labelFilter: pass-fail
+      env:
+        - name: SERVER_URL
+          value: '{{ services["vllm-server"]["url"] }}'
+        - name: MODEL_NAME
+          value: '{{ serverConfig.model }}'
+
+    - name: sweep
+      image: quay.io/inference-perf/inference-perf:latest
+      labelFilter: quantitative
+      env:
+        - name: HOME
+          value: /tmp
+        - name: SERVER_URL
+          value: '{{ services["vllm-server"]["url"] }}'
+        - name: SWEEP_COMMAND
+          value: '{{ paramSweep.command | toJson }}'
+      parameterSweep:
+        baseCommand:
+          args:
+            - inference-perf
+          flags:
+            server.type: vllm
+            server.base_url: '{{ services["vllm-server"]["url"] }}'
+            server.model_name: '{{ serverConfig.model }}'
+            server.ignore_eos: 'true'
+            api.type: completion
+            api.streaming: 'true'
+            data.type: shared_prefix
+            data.shared_prefix.num_groups: 500
+            data.shared_prefix.num_prompts_per_group: 1
+            data.shared_prefix.system_prompt_len: 16000
+            data.shared_prefix.question_len: 250
+            data.shared_prefix.output_len: 128
+            load.type: constant
+            load.num_workers: 1
+            load.worker_max_concurrency: 1
+            storage.local_storage.path: /uat_workspace
+            report.request_lifecycle.summary: 'true'
+            report.request_lifecycle.per_request: 'false'
+        entries:
+          - id: stress
+            description: Ramped load stress test for chunked prefill inference
+            flags:
+              load.stages: '[{"rate": 0.5, "duration": 60}, {"rate": 1, "duration": 60}, {"rate": 1.5, "duration": 60}, {"rate": 2, "duration": 60}]'

@@ -19,6 +19,7 @@ spec:
             cpu: AMD EPYC 9754 128-Core Processor
           nvlink: NV6
           nvlinkTopology: all-to-all
+          nvlinkP2pBandwidth: 150
           pcieWidth: 16
           pcieGen: 5
           memory: 1512Gi
@@ -47,6 +48,7 @@ spec:
             cpu: Intel(R) Xeon(R) Platinum 8358 CPU @ 2.60GHz
           nvlink: NV4
           nvlinkTopology: all-to-all
+          nvlinkP2pBandwidth: 100
           pcieWidth: 16
           pcieGen: 4
           memory: 1007Gi

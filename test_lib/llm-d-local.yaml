@@ -1,0 +1,202 @@
+# Assisted by Claude Opus 4.6
+apiVersion: uat.openshift.io/v1
+kind: Test
+metadata:
+  name: llm-d-local
+  version: v0.2.0
+  description: >-
+    Colocated prefill/decode disaggregated inference with NIXL KV transfer
+    over cuda_ipc/NVLink. Designed for single-node clusters without RDMA.
+    Bypasses EPP and Envoy by colocating all components in a single pod.
+spec:
+  source:
+    ginkgo: llm-d-local.go
+
+  serverConfig:
+    model: /models/ibm-granite/granite-3.3-8b-instruct
+
+  dag:
+    - name: pd-server
+      image: ghcr.io/llm-d/llm-d-cuda:v0.8.0
+      service:
+        enabled: true
+        port: 8080
+        name: pd-server
+        headless: true
+      command:
+        args:
+          - sh
+          - -c
+          - >-
+            CUDA_VISIBLE_DEVICES=$PREFILL_GPUS
+            VLLM_NIXL_SIDE_CHANNEL_PORT=5557
+            python -m vllm.entrypoints.openai.api_server
+            --model=$MODEL
+            --tensor-parallel-size=$PREFILL_TP
+            --port=8100
+            --block-size=$BLOCK_SIZE
+            --kv-transfer-config="$KV_TRANSFER_CONFIG" &
+            CUDA_VISIBLE_DEVICES=$DECODE_GPUS
+            VLLM_NIXL_SIDE_CHANNEL_PORT=5558
+            python -m vllm.entrypoints.openai.api_server
+            --model=$MODEL
+            --tensor-parallel-size=$DECODE_TP
+            --port=8200
+            --block-size=$BLOCK_SIZE
+            --kv-transfer-config="$KV_TRANSFER_CONFIG"
+      env:
+        - name: HOME
+          value: /tmp
+        - name: MODEL
+          value: '{{ serverConfig.model }}'
+        - name: KV_TRANSFER_CONFIG
+          value: '{"kv_connector":"NixlConnector","kv_role":"kv_both","kv_connector_extra_config":{"enable_cross_layers_blocks":"true"}}'
+        - name: DECODE_TP
+          value: '{% set g = nodeSpec.componentValidation.sanity["nvidia.com/gpu"] %}{{ g - (g // 2) }}'
+        - name: PREFILL_TP
+          value: '{% set g = nodeSpec.componentValidation.sanity["nvidia.com/gpu"] %}{{ g // 2 }}'
+        - name: DECODE_GPUS
+          value: '{% set g = nodeSpec.componentValidation.sanity["nvidia.com/gpu"] %}{% set d = g - (g // 2) %}{{ range(d) | join(",") }}'
+        - name: PREFILL_GPUS
+          value: '{% set g = nodeSpec.componentValidation.sanity["nvidia.com/gpu"] %}{% set d = g - (g // 2) %}{{ range(d, g) | join(",") }}'
+        - name: BLOCK_SIZE
+          value: '{% set mem = nodeSpec.componentValidation.sanity["nvidia.com/gpu.memory"] %}{{ ((mem + 2560) // 5120) * 64 }}'
+        - name: VLLM_NIXL_SIDE_CHANNEL_HOST
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: UCX_TLS
+          value: cuda_ipc,cuda_copy,sm,tcp
+        - name: UCX_CUDA_IPC_CACHE
+          value: 'yes'
+        - name: UCX_RNDV_PIPELINE_SHM_ENABLE
+          value: 'no'
+        - name: CUDA_DEVICE_MAX_CONNECTIONS
+          value: '32'
+        - name: VLLM_LOGGING_LEVEL
+          value: INFO
+      ports:
+        - containerPort: 8200
+          name: vllm-decode
+        - containerPort: 8100
+          name: vllm-prefill
+      readinessProbe:
+        exec:
+          command:
+            - python
+            - -c
+            - "import urllib.request; urllib.request.urlopen('http://localhost:8200/health'); urllib.request.urlopen('http://localhost:8100/health')"
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 30
+      resources:
+        requests:
+          nvidia.com/gpu: '{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}'
+        limits:
+          nvidia.com/gpu: '{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}'
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
+      volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+      sidecars:
+        - name: routing-sidecar
+          image: ghcr.io/llm-d/llm-d-router-disagg-sidecar:main
+          args:
+            - --port=8000
+            - --model-server-port=8200
+            - --kv-connector=nixlv2
+            - --secure-proxy=false
+          ports:
+            - containerPort: 8000
+              name: sidecar
+        - name: header-injector
+          image: docker.io/nginx:1.27-alpine
+          command:
+            - sh
+            - -c
+          args:
+            - >-
+              printf 'pid /tmp/nginx.pid;
+              events{worker_connections 128;}
+              http{client_body_temp_path /tmp/client_body;
+              proxy_temp_path /tmp/proxy;
+              fastcgi_temp_path /tmp/fastcgi;
+              uwsgi_temp_path /tmp/uwsgi;
+              scgi_temp_path /tmp/scgi;
+              server{listen 8080;
+              location /{
+              proxy_pass http://localhost:8000;
+              proxy_set_header x-prefiller-host-port "localhost:8100";
+              proxy_set_header Host $host;
+              proxy_buffering off;
+              proxy_read_timeout 300s;
+              proxy_http_version 1.1;
+              chunked_transfer_encoding on;
+              }}}'
+              > /tmp/nginx.conf
+              && exec nginx -c /tmp/nginx.conf -g 'daemon off;'
+          ports:
+            - containerPort: 8080
+              name: http
+      persistsThroughSweep: true
+
+    - name: pass-fail
+      image: registry.redhat.io/ubi9/ubi:latest
+      labelFilter: pass-fail
+      env:
+        - name: PREFILL_URL
+          value: 'http://{{ services["pd-server"]["name"] }}:8100'
+        - name: DECODE_URL
+          value: 'http://{{ services["pd-server"]["name"] }}:8200'
+        - name: GATEWAY_URL
+          value: '{{ services["pd-server"]["url"] }}'
+        - name: MODEL_NAME
+          value: '{{ serverConfig.model }}'
+        - name: PREFILL_TP
+          value: '{% set g = nodeSpec.componentValidation.sanity["nvidia.com/gpu"] %}{{ g // 2 }}'
+        - name: DECODE_TP
+          value: '{% set g = nodeSpec.componentValidation.sanity["nvidia.com/gpu"] %}{{ g - (g // 2) }}'
+
+    - name: sweep
+      image: quay.io/inference-perf/inference-perf:latest
+      labelFilter: quantitative
+      env:
+        - name: HOME
+          value: /tmp
+        - name: SERVER_URL
+          value: '{{ services["pd-server"]["url"] }}'
+        - name: SWEEP_COMMAND
+          value: '{{ paramSweep.command | toJson }}'
+      parameterSweep:
+        baseCommand:
+          args:
+            - inference-perf
+          flags:
+            server.type: vllm
+            server.base_url: '{{ services["pd-server"]["url"] }}'
+            server.model_name: '{{ serverConfig.model }}'
+            server.ignore_eos: 'true'
+            api.type: completion
+            api.streaming: 'true'
+            data.type: shared_prefix
+            data.shared_prefix.num_groups: 500
+            data.shared_prefix.num_prompts_per_group: 1
+            data.shared_prefix.system_prompt_len: 16000
+            data.shared_prefix.question_len: 250
+            data.shared_prefix.output_len: 128
+            load.type: constant
+            load.num_workers: 1
+            load.worker_max_concurrency: 1
+            storage.local_storage.path: /uat_workspace
+            report.request_lifecycle.summary: 'true'
+            report.request_lifecycle.per_request: 'false'
+        entries:
+          - id: stress
+            description: Ramped load stress test for colocated P/D disaggregated inference
+            flags:
+              load.stages: '[{"rate": 0.5, "duration": 60}, {"rate": 1, "duration": 60}, {"rate": 1.5, "duration": 60}, {"rate": 2, "duration": 60}]'

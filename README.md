@@ -73,7 +73,7 @@ The generator can also consume `steps.json` as input via `--steps`, skipping con
 
 ```bash
 # Normal: compute steps from config, write steps.json + manual + tekton
-python -m src --test-suite examples/minimal/test_suite.yaml --test-lib examples/minimal --cluster cluster/ocp-test.yaml
+python -m src --test-suite examples/all_tests.yaml --test-lib test_lib --cluster cluster/ocp-test.yaml
 
 # From steps: load steps.json, write manual + tekton
 python -m src --steps build/steps.json
@@ -204,7 +204,7 @@ DAG pods also get a second mount at `/binaries` for access to compiled test bina
 
 The `setup/` directory contains Kubernetes manifests for one-time cluster preparation:
 
-- **`namespaces-and-pvcs.yaml`** — creates the `uat-project` namespace, a 100Gi RWX PVC for test results (`uat-project-storage`), and RBAC (Role + RoleBinding) granting the test user access to pods, services, configmaps, workload APIs, and inference networking resources (InferencePools). Also creates service accounts for specialized access: `uat-monitoring-sa` (read-only access to InferencePools, InferenceObjectives, InferenceModelRewrites, and pods) and `uat-log-reader` (read-only access to pod logs).
+- **`namespaces-and-pvcs.yaml`** — creates the `uat-project` namespace, a 100Gi RWX PVC for test results (`uat-project-storage`), and RBAC (Role + RoleBinding) granting the test user access to pods, services, configmaps, and workload APIs.
 - **`uat-models-pvc.yaml`** — creates a 500Gi RWX PVC (`uat-models`) for pre-downloaded model weights.
 - **`model-downloader.yaml`** — a one-shot pod that downloads HuggingFace models to the models PVC. Add models to the `MODELS` list and re-run.
 - **`sanity_scan.py`** — a CLI tool that launches scanner pods on cluster nodes, scans hardware (GPU, CPU, memory, NUMA, InfiniBand, cpuset), and merges detected values into a cluster YAML's sanity block. Run with `python3 setup/sanity_scan.py --cluster cluster/ocp-test.yaml`.
@@ -240,8 +240,8 @@ pip install -r requirements.txt
 
 ```bash
 python -m src \
-  --test-suite examples/minimal/test_suite.yaml \
-  --test-lib examples/minimal \
+  --test-suite examples/all_tests.yaml \
+  --test-lib test_lib \
   --cluster cluster/ocp-test.yaml \
   --config config.yaml \
   --templates-dir templates \
@@ -332,7 +332,7 @@ spec:
 
 ### 2. Create the Test Definition
 
-Create `examples/minimal/my-test.yaml`:
+Create `test_lib/my-test.yaml`:
 
 ```yaml
 apiVersion: uat.openshift.io/v1
@@ -358,7 +358,7 @@ spec:
 
 ### 3. Write the Ginkgo Test
 
-Create `examples/minimal/my-test.go`:
+Create `test_lib/my-test.go`:
 
 ```go
 package test
@@ -387,7 +387,7 @@ The `Label("pass-fail")` must match the `labelFilter` in the test YAML. The comp
 ### 4. Generate and Run
 
 ```bash
-python -m src --test-suite examples/minimal/test_suite.yaml --test-lib examples/minimal --cluster cluster/ocp-test.yaml
+python -m src --test-suite examples/all_tests.yaml --test-lib test_lib --cluster cluster/ocp-test.yaml
 ```
 
 The generated output compiles `my-test.go` into a binary on the builder pod and runs it on each target node.
@@ -718,7 +718,7 @@ DAG steps can specify a `serviceAccountName` and custom `labels`:
 dag:
   - name: vllm-server
     image: nvcr.io/nvidia/vllm:26.03-py3
-    serviceAccountName: uat-monitoring-sa
+    serviceAccountName: my-service-account
     labels:
       llm-d.ai/role: prefill
       app: vllm
@@ -750,7 +750,7 @@ The `--templates-dir` CLI arg loads all Jinja2 templates from a custom directory
 ```bash
 cp -r templates/ my-templates/
 # edit my-templates/dag-pod.yaml.j2 to add custom annotations
-python -m src --templates-dir my-templates/ --test-suite examples/minimal/test_suite.yaml --test-lib examples/minimal --cluster cluster/ocp-test.yaml
+python -m src --templates-dir my-templates/ --test-suite examples/all_tests.yaml --test-lib test_lib --cluster cluster/ocp-test.yaml
 ```
 
 ### Custom Aggregation
@@ -760,7 +760,7 @@ The `--scripts-dir` CLI arg controls where `aggregate.py` is loaded from. Replac
 ```bash
 cp -r scripts/ my-scripts/
 # edit my-scripts/aggregate.py to push results to a dashboard
-python -m src --scripts-dir my-scripts/ --test-suite examples/minimal/test_suite.yaml --test-lib examples/minimal --cluster cluster/ocp-test.yaml
+python -m src --scripts-dir my-scripts/ --test-suite examples/all_tests.yaml --test-lib test_lib --cluster cluster/ocp-test.yaml
 ```
 
 The script receives the results directory as its first argument and is expected to scan for `junit.xml` files across all step directories.
@@ -854,7 +854,7 @@ tests/                Unit and integration tests
 scripts/
   aggregate.py        JUnit XML aggregation (deployed via ConfigMap)
 setup/
-  namespaces-and-pvcs.yaml  Namespaces, PVCs, RBAC, and inference networking
+  namespaces-and-pvcs.yaml  Namespaces, PVCs, and RBAC
   sanity_scan.py            CLI tool: launches scanner pods, scans hardware (GPU, CPU,
                             memory, NUMA, InfiniBand, cpuset), merges into cluster YAML
 templates/
@@ -862,7 +862,8 @@ templates/
   resource.yaml.j2    Generic template for arbitrary K8s resources (resource steps)
   *.sh.j2             Jinja2 templates for shell scripts
 examples/
-  minimal/            Example test suite (test definitions, Go source)
+  all_tests.yaml      Test suite (test execution order, scopes, failure policies)
+test_lib/             Test library (test definitions, Go source)
 cluster/              Cluster configs
 config.yaml           Tool config
 conftest.py           Adds project root to sys.path for pytest

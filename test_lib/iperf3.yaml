@@ -10,8 +10,6 @@ spec:
     ginkgo: iperf3.go
 
   dag:
-    # Step 1: iperf3 server (stays up for the client to connect to)
-    # With setSize: 2, this step runs on node 0 of the set
     - name: iperf-server
       image: networkstatic/iperf3:latest
       command:
@@ -34,8 +32,6 @@ spec:
         failureThreshold: 6
       persistsThroughSweep: true
 
-    # Step 2: Ginkgo test client — pings server then measures bandwidth
-    # With setSize: 2, this step runs on node 1 of the set
     - name: iperf-client
       image: networkstatic/iperf3:latest
       labelFilter: pass-fail

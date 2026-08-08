@@ -707,7 +707,7 @@ For cluster-scoped tests, `setRequirements` in the placement config filters node
 
 ## Example Test Library Reference
 
-See [`examples/minimal/README.md`](examples/minimal/README.md) for detailed documentation of the five example test implementations (`component.go`, `guidellm.go`, `inference-perf.go`, `iperf3.go`, `platform-check.go`).
+See [`test_lib/README.md`](test_lib/README.md) for detailed documentation of the example test implementations.
 
 ## Dependencies and CI
 

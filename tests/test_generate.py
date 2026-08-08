@@ -225,7 +225,7 @@ class TestComputeSteps:
             cs,
             env,
             "cluster/ocp-test.yaml",
-            "examples/minimal/test_suite.yaml",
+            "examples/all_tests.yaml",
             "# agg",
         )
         names = [s.name for s in steps]
@@ -244,7 +244,7 @@ class TestComputeSteps:
             cs,
             env,
             "cluster/ocp-test.yaml",
-            "examples/minimal/test_suite.yaml",
+            "examples/all_tests.yaml",
             "# agg",
         )
         cm = next(
