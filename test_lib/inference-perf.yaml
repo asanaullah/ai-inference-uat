@@ -50,7 +50,7 @@ spec:
       parameterSweep: null
 
     - name: pass-fail
-      image: quay.io/inference-perf/inference-perf:latest
+      image: quay.io/inference-perf/inference-perf:v0.6.1
       labelFilter: pass-fail
       env:
         - name: HOME
@@ -61,7 +61,7 @@ spec:
       parameterSweep: null
 
     - name: sweep
-      image: quay.io/inference-perf/inference-perf:latest
+      image: quay.io/inference-perf/inference-perf:v0.6.1
       labelFilter: quantitative
       env:
         - name: HOME

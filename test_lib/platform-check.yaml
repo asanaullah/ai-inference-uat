@@ -42,7 +42,7 @@ spec:
 
   dag:
     - name: checker
-      image: registry.redhat.io/ubi9/ubi:latest
+      image: registry.redhat.io/ubi9/ubi:9.8
       labelFilter: pass-fail
       env:
         - name: PERMISSION_CHECKS

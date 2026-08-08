@@ -11,7 +11,7 @@ spec:
 
   dag:
     - name: test-runner
-      image: registry.redhat.io/ubi9/ubi:latest
+      image: registry.redhat.io/ubi9/ubi:9.8
       labelFilter: pass-fail
       resources:
         requests:

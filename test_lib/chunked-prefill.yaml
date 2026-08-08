@@ -62,7 +62,7 @@ spec:
       persistsThroughSweep: true
 
     - name: pass-fail
-      image: registry.redhat.io/ubi9/ubi:latest
+      image: registry.redhat.io/ubi9/ubi:9.8
       labelFilter: pass-fail
       env:
         - name: SERVER_URL
@@ -71,7 +71,7 @@ spec:
           value: '{{ serverConfig.model }}'
 
     - name: sweep
-      image: quay.io/inference-perf/inference-perf:latest
+      image: quay.io/inference-perf/inference-perf:v0.6.1
       labelFilter: quantitative
       env:
         - name: HOME

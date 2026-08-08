@@ -105,7 +105,7 @@ spec:
           mountPath: /dev/shm
       sidecars:
         - name: routing-sidecar
-          image: ghcr.io/llm-d/llm-d-router-disagg-sidecar:main
+          image: ghcr.io/llm-d/llm-d-router-disagg-sidecar:v0.9.0
           args:
             - --port=8000
             - --model-server-port=8200
@@ -146,7 +146,7 @@ spec:
       persistsThroughSweep: true
 
     - name: pass-fail
-      image: registry.redhat.io/ubi9/ubi:latest
+      image: registry.redhat.io/ubi9/ubi:9.8
       labelFilter: pass-fail
       env:
         - name: PREFILL_URL
@@ -163,7 +163,7 @@ spec:
           value: '{% set g = nodeSpec.componentValidation.sanity["nvidia.com/gpu"] %}{{ g - (g // 2) }}'
 
     - name: sweep
-      image: quay.io/inference-perf/inference-perf:latest
+      image: quay.io/inference-perf/inference-perf:v0.6.1
       labelFilter: quantitative
       env:
         - name: HOME
