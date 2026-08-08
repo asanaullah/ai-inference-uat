@@ -16,6 +16,7 @@ def write_manual(
     output_dir: Path,
     run_id: str,
     jinja_env: Environment,
+    namespace: str,
 ) -> None:
     manual_dir = output_dir / "manual"
     if manual_dir.exists():
@@ -30,7 +31,7 @@ def write_manual(
 
     counter = 1
     for step in setup:
-        if _write_step(step, manual_dir, jinja_env, counter, pad_width):
+        if _write_step(step, manual_dir, jinja_env, counter, pad_width, namespace):
             counter += 1
 
     tests_grouped: dict[str, list[Step]] = {}
@@ -53,17 +54,18 @@ def write_manual(
                         jinja_env,
                         counter,
                         pad_width,
+                        namespace,
                     ):
                         wrote_any = True
                 if wrote_any:
                     counter += 1
         else:
             for s in t_steps:
-                if _write_step(s, manual_dir, jinja_env, counter, pad_width):
+                if _write_step(s, manual_dir, jinja_env, counter, pad_width, namespace):
                     counter += 1
 
     for step in teardown:
-        if _write_step(step, manual_dir, jinja_env, counter, pad_width):
+        if _write_step(step, manual_dir, jinja_env, counter, pad_width, namespace):
             counter += 1
 
     _stamp(manual_dir, run_id)
@@ -79,6 +81,7 @@ def _write_step(
     jinja_env: Environment,
     counter: int,
     pad_width: int,
+    namespace: str,
 ) -> bool:
     assert step.type in ("generate", "command"), f"Unknown step type: {step.type}"
 
@@ -100,7 +103,7 @@ def _write_step(
         _make_executable(path)
         return True
 
-    script = _derive_manual_script(step, jinja_env)
+    script = _derive_manual_script(step, jinja_env, namespace)
     if script:
         filename = _step_filename(step)
         path = directory / f"{str(counter).zfill(pad_width)}-{filename}.sh"
@@ -110,7 +113,9 @@ def _write_step(
     return False
 
 
-def _derive_manual_script(step: Step, jinja_env: Environment) -> str | None:
+def _derive_manual_script(
+    step: Step, jinja_env: Environment, namespace: str
+) -> str | None:
     config = step.config
     assert "command" in config, f"Command step {step.name} missing config.command"
     cmd = config["command"]
@@ -126,6 +131,7 @@ def _derive_manual_script(step: Step, jinja_env: Environment) -> str | None:
                 "probe": config.get("probe", "none"),
                 "pod_name": config.get("pod_name", ""),
                 "timeout": config.get("timeout", ""),
+                "namespace": namespace,
             },
         )
     elif cmd == "exec":
@@ -137,6 +143,7 @@ def _derive_manual_script(step: Step, jinja_env: Environment) -> str | None:
             {
                 "target": config["target"],
                 "args": config["args"],
+                "namespace": namespace,
             },
         )
     elif cmd == "delete":
@@ -149,6 +156,7 @@ def _derive_manual_script(step: Step, jinja_env: Environment) -> str | None:
                 "resource_types": config.get(
                     "resource_types", "pods,services,deployments"
                 ),
+                "namespace": namespace,
             },
         )
     elif cmd == "delete-all":
@@ -158,6 +166,7 @@ def _derive_manual_script(step: Step, jinja_env: Environment) -> str | None:
             {
                 "configmap_name": config.get("configmap_name", ""),
                 "managed_by_label": config.get("managed_by_label", ""),
+                "namespace": namespace,
             },
         )
     return None

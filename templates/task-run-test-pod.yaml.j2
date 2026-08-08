@@ -14,20 +14,20 @@ spec:
     - name: run-test
       image: {{ ose_cli_image }}
       script: |
-        oc apply -f - <<'MANIFEST_EOF'
+        oc apply -n {{ namespace }} -f - <<'MANIFEST_EOF'
         {{ manifest | indent(8) }}
         MANIFEST_EOF
 
         echo "Waiting for pod {{ pod_name }} to complete (timeout: {{ timeout }}s)..."
         DEADLINE=$(($(date +%s) + {{ timeout }}))
         while true; do
-          PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
+          PHASE=$(oc get pod {{ pod_name }} -n {{ namespace }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
           if [ "$PHASE" = "Succeeded" ]; then
             echo "Pod {{ pod_name }} completed successfully"
             exit 0
           elif [ "$PHASE" = "Failed" ]; then
             echo "Pod {{ pod_name }} failed"
-            oc logs {{ pod_name }} --tail=50 || true
+            oc logs {{ pod_name }} -n {{ namespace }} --tail=50 || true
             exit 1
           fi
           if [ "$(date +%s)" -ge "$DEADLINE" ]; then

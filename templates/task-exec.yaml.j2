@@ -14,4 +14,4 @@ spec:
     - name: exec
       image: {{ ose_cli_image }}
       script: |
-        oc exec {{ target }} -- {{ args | shell_join }}
+        oc exec {{ target }} -n {{ namespace }} -- {{ args | shell_join }}

@@ -100,8 +100,8 @@ class TestDeriveManualScript:
                 "args": ["bash", "/run.sh"],
             },
         )
-        script = _derive_manual_script(step, env)
-        assert "oc exec pod -- bash /run.sh" in script
+        script = _derive_manual_script(step, env, "test-ns")
+        assert "oc exec pod -n test-ns -- bash /run.sh" in script
 
     def test_delete(self, env):
         step = Step(
@@ -112,9 +112,10 @@ class TestDeriveManualScript:
                 "selector": "app=x",
             },
         )
-        script = _derive_manual_script(step, env)
+        script = _derive_manual_script(step, env, "test-ns")
         assert (
-            "oc delete pods,services,deployments -l app=x --ignore-not-found" in script
+            "oc delete pods,services,deployments -l app=x --ignore-not-found -n test-ns"
+            in script
         )
 
     def test_delete_all(self, env):
@@ -127,16 +128,16 @@ class TestDeriveManualScript:
                 "managed_by_label": "uat",
             },
         )
-        script = _derive_manual_script(step, env)
+        script = _derive_manual_script(step, env, "test-ns")
         assert (
-            "oc delete pods -l app.kubernetes.io/managed-by=uat --ignore-not-found"
+            "oc delete pods -l app.kubernetes.io/managed-by=uat --ignore-not-found -n test-ns"
             in script
         )
         assert (
-            "oc delete services -l app.kubernetes.io/managed-by=uat --ignore-not-found"
+            "oc delete services -l app.kubernetes.io/managed-by=uat --ignore-not-found -n test-ns"
             in script
         )
-        assert "oc delete configmap cm --ignore-not-found" in script
+        assert "oc delete configmap cm --ignore-not-found -n test-ns" in script
 
     def test_apply(self, env):
         step = Step(
@@ -145,8 +146,8 @@ class TestDeriveManualScript:
             config={"command": "apply"},
             source=["my-manifest"],
         )
-        script = _derive_manual_script(step, env)
-        assert "oc apply -f manifests/my-manifest.yaml" in script
+        script = _derive_manual_script(step, env, "test-ns")
+        assert "oc apply -f manifests/my-manifest.yaml -n test-ns" in script
 
 
 # -- _render_tekton_task ------------------------------------------------------

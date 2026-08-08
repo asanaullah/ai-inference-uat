@@ -3,23 +3,23 @@
 set -e
 {% if probe == "none" %}
 echo "Applying {{ manifest }}..."
-oc apply -f {{ manifest }}
+oc apply -f {{ manifest }} -n {{ namespace }}
 echo "Applied {{ manifest }}"
 {% elif probe == "wait-ready" %}
 echo "Applying {{ manifest }}..."
-oc apply -f {{ manifest }}
+oc apply -f {{ manifest }} -n {{ namespace }}
 echo "Waiting for {{ pod_name }} to be ready (timeout: {{ timeout }}s)..."
-oc wait --for=condition=Ready pod/{{ pod_name }} --timeout={{ timeout }}s
+oc wait --for=condition=Ready pod/{{ pod_name }} --timeout={{ timeout }}s -n {{ namespace }}
 echo "{{ pod_name }} is ready"
 echo "--- {{ pod_name }} recent logs ---"
-oc logs {{ pod_name }} --tail=10 || true
+oc logs {{ pod_name }} --tail=10 -n {{ namespace }} || true
 {% elif probe == "poll-completed" %}
 echo "Applying {{ manifest }}..."
-oc apply -f {{ manifest }}
+oc apply -f {{ manifest }} -n {{ namespace }}
 
 echo "Waiting for {{ pod_name }} to start..."
 while true; do
-  PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
+  PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' -n {{ namespace }} 2>/dev/null || echo "Pending")
   case "$PHASE" in
     Running|Succeeded|Failed) break ;;
     *) sleep 2 ;;
@@ -27,9 +27,9 @@ while true; do
 done
 
 echo "--- {{ pod_name }} logs ---"
-oc logs -f {{ pod_name }} 2>/dev/null || true
+oc logs -f {{ pod_name }} -n {{ namespace }} 2>/dev/null || true
 
-PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' -n {{ namespace }} 2>/dev/null || echo "Unknown")
 if [ "$PHASE" = "Succeeded" ]; then
   echo "PASSED: {{ pod_name }}"
   exit 0
@@ -41,7 +41,7 @@ fi
 echo "Waiting for {{ pod_name }} to complete (timeout: {{ timeout }}s)..."
 DEADLINE=$(($(date +%s) + {{ timeout }}))
 while true; do
-  PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
+  PHASE=$(oc get pod {{ pod_name }} -o jsonpath='{.status.phase}' -n {{ namespace }} 2>/dev/null || echo "Pending")
   if [ "$PHASE" = "Succeeded" ]; then
     echo "PASSED: {{ pod_name }}"
     exit 0

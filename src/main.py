@@ -73,7 +73,7 @@ def main() -> None:
         )
 
     try:
-        write_manual(all_steps, output_dir, args.run_id, jinja_env)
+        write_manual(all_steps, output_dir, args.run_id, jinja_env, cs.namespace)
     except (OSError, TemplateError, ValueError) as e:
         print(f"Error writing manual output: {e}")
         raise SystemExit(1)

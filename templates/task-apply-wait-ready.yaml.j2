@@ -14,10 +14,10 @@ spec:
     - name: apply-and-wait
       image: {{ ose_cli_image }}
       script: |
-        oc apply -f - <<'MANIFEST_EOF'
+        oc apply -n {{ namespace }} -f - <<'MANIFEST_EOF'
         {{ manifest | indent(8) }}
         MANIFEST_EOF
 {% if wait_ready %}
         echo "Waiting for {{ pod_name }} to be ready..."
-        oc wait --for=condition=Ready pod/{{ pod_name }} --timeout={{ timeout }}s
+        oc wait --for=condition=Ready pod/{{ pod_name }} --timeout={{ timeout }}s -n {{ namespace }}
 {% endif %}
