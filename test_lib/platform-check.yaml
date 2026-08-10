@@ -4,7 +4,7 @@ kind: Test
 metadata:
   name: platform-check
   version: v0.0.1
-  description: Validate platform configuration, RBAC permissions, and required API groups
+  description: Validate platform RBAC, API groups, and operator CRD registration
   supportedScopes:
     - node
     - cluster
@@ -15,6 +15,7 @@ spec:
 
   serverConfig:
     checks:
+      # RBAC sandbox verification
       - type: permission
         verb: get
         resource: pods
@@ -31,6 +32,8 @@ spec:
         verb: get
         resource: nodes
         expected: "no"
+
+      # Required API groups
       - type: apiGroup
         group: kubeflow.org
         expected: "yes"
@@ -43,6 +46,40 @@ spec:
       - type: apiGroup
         group: nonexistent.example.io
         expected: "no"
+
+      # RHOAI operator
+      - type: crd
+        apiVersion: datasciencecluster.opendatahub.io/v1
+        kind: DataScienceCluster
+        expected: "yes"
+      - type: crd
+        apiVersion: dscinitialization.opendatahub.io/v1
+        kind: DSCInitialization
+        expected: "yes"
+
+      # GPU operator
+      - type: crd
+        apiVersion: nvidia.com/v1
+        kind: ClusterPolicy
+        expected: "yes"
+
+      # Node Feature Discovery
+      - type: crd
+        apiVersion: nfd.openshift.io/v1
+        kind: NodeFeatureDiscovery
+        expected: "yes"
+
+      # OpenShift Serverless (KNative)
+      - type: crd
+        apiVersion: operator.knative.dev/v1beta1
+        kind: KnativeServing
+        expected: "yes"
+
+      # Service Mesh
+      - type: crd
+        apiVersion: maistra.io/v2
+        kind: ServiceMeshControlPlane
+        expected: "yes"
 
   dag:
     - name: checker

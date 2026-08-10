@@ -9,7 +9,7 @@ Platform prerequisites. Checks that must pass before GPU workloads run.
 
 | Test | Description |
 |------|-------------|
-| [platform-check](#1-platform-check) | RBAC permissions and API group availability |
+| [platform-check](#1-platform-check) | RBAC permissions, API groups, and operator CRD registration |
 | [component](#2-component) | Node hardware and software validation |
 | [iperf3](#3-iperf3) | Inter-node TCP bandwidth |
 
@@ -60,14 +60,14 @@ Namespace isolation and cross-tenant performance impact. Isolation tests verify 
 
 ### Purpose
 
-This test checks whether the cluster has the right RBAC permissions and API groups in place before any workloads get deployed. On the RBAC side, it confirms that the test pod's ServiceAccount is properly locked down and should not be able to read secrets, create pods, or access node information. On the API group side, it confirms that the CRDs needed by later tests (KubeFlow, KServe, Ray) are actually installed. Running this first means you find out about missing platform prerequisites before spending time on GPU-heavy tests that would just fail anyway.
+This test checks whether the cluster has the right RBAC permissions, API groups, and operator CRDs in place before any workloads get deployed. On the RBAC side, it confirms that the test pod's ServiceAccount is properly locked down and should not be able to read secrets, create pods, or access node information. On the API group side, it confirms that the CRDs needed by later tests (KubeFlow, KServe, Ray) are actually installed. On the CRD side, it verifies that the operators required by the platform (RHOAI, GPU operator, NFD, Serverless, Service Mesh) have registered their custom resource definitions. Running this first means you find out about missing platform prerequisites before spending time on GPU-heavy tests that would just fail anyway.
 
 ### Architecture
 
 ```
 checker [pass-fail, ephemeral]
     creates SelfSubjectAccessReviews (RBAC checks)
-    queries API server discovery endpoint (API group checks)
+    queries API server discovery endpoint (API group and CRD checks)
 ```
 
 This is a single ephemeral pod with no GPUs, no server, no service, and no sweep phase.
@@ -78,7 +78,7 @@ This is a single ephemeral pod with no GPUs, no server, no service, and no sweep
 |------|-------|------|---------|------------|
 | checker | `registry.redhat.io/ubi9/ubi:latest` | none | none | `PERMISSION_CHECKS` env (JSON array of check objects) |
 
-The list of checks to run is defined in the test YAML and passed to the pod as a JSON array through the `PERMISSION_CHECKS` environment variable. Each entry in the array has a `type` (either `permission` or `apiGroup`) and an `expected` value (`"yes"` or `"no"`). The user can add, remove, or change the expected value for any check in the YAML to match their cluster's configuration. The test goes through each check, compares the actual result against the expected value, and fails if any of them do not match.
+The list of checks to run is defined in the test YAML and passed to the pod as a JSON array through the `PERMISSION_CHECKS` environment variable. Each entry in the array has a `type` (`permission`, `apiGroup`, or `crd`) and an `expected` value (`"yes"` or `"no"`). The user can add, remove, or change the expected value for any check in the YAML to match their cluster's configuration. The test goes through each check, compares the actual result against the expected value, and fails if any of them do not match.
 
 ### Pass-fail assertions
 
@@ -98,13 +98,24 @@ The default checks included in the YAML are listed below, but these are fully co
 7. `ray.io` is present
 8. `nonexistent.example.io` is absent (negative control)
 
+**CRD checks** confirm required operators have registered their custom resource definitions:
+
+9. `DataScienceCluster` in `datasciencecluster.opendatahub.io/v1` (RHOAI operator)
+10. `DSCInitialization` in `dscinitialization.opendatahub.io/v1` (RHOAI operator)
+11. `ClusterPolicy` in `nvidia.com/v1` (GPU operator)
+12. `NodeFeatureDiscovery` in `nfd.openshift.io/v1` (NFD operator)
+13. `KnativeServing` in `operator.knative.dev/v1beta1` (OpenShift Serverless)
+14. `ServiceMeshControlPlane` in `maistra.io/v2` (Service Mesh)
+
 ### Prerequisites
 
-The in-cluster Kubernetes client must work from the pod (`rest.InClusterConfig()`). No special RBAC is needed. The default ServiceAccount is sufficient since the test is specifically checking what permissions it does and does not have.
+The in-cluster Kubernetes client must work from the pod (`rest.InClusterConfig()`). No special RBAC is needed. The default ServiceAccount is sufficient since all three check types use APIs that are available to any authenticated user: `SelfSubjectAccessReview` for permission checks, and the Discovery API for API group and CRD checks.
+
+Note: operator health checks (e.g. verifying Deployment conditions, CR status fields, or DSC component conditions) were considered but would require cross-namespace read access to Deployments and custom resources, which conflicts with the sandbox design of this test. The CRD existence checks validate that operators are installed; actual operator health is validated implicitly by the downstream tests that depend on them.
 
 ### Design rationale
 
-The permission checks are there to verify that the test pod is sandboxed. If any of them come back as allowed, the test fails because it means the ServiceAccount has more privileges than it should. This guards against accidentally running the test suite with an overly permissive ServiceAccount. The API group checks verify that the cluster has the CRDs that downstream tests depend on. For example, the llm-d test needs `inference.networking.k8s.io` for InferencePool resources. Finding out about a missing CRD here gives a much clearer error message than a cryptic failure partway through a later test. The `nonexistent.example.io` entry with expected `"no"` is a negative control that confirms the API group check logic is actually working and not just returning `"yes"` for everything.
+The permission checks are there to verify that the test pod is sandboxed. If any of them come back as allowed, the test fails because it means the ServiceAccount has more privileges than it should. This guards against accidentally running the test suite with an overly permissive ServiceAccount. The API group checks verify that the cluster has the CRDs that downstream tests depend on. For example, the llm-d test needs `inference.networking.k8s.io` for InferencePool resources. Finding out about a missing CRD here gives a much clearer error message than a cryptic failure partway through a later test. The `nonexistent.example.io` entry with expected `"no"` is a negative control that confirms the API group check logic is actually working and not just returning `"yes"` for everything. The CRD checks go one level deeper than API group checks by verifying that specific Kinds exist within an API group/version, which confirms the operator has registered its full CRD schema rather than just the API group being present.
 
 
 ---
