@@ -12,6 +12,7 @@ from src.common import (
     add_teardown_steps,
     build_command,
     create_jinja_env,
+    load_config,
     parse_k8s_quantity,
     render_env,
     render_manifest,
@@ -779,16 +780,16 @@ class TestRegisterService:
     def test_service_name_includes_prefix(self):
         step = self._make_dag_step()
         services: dict = {}
-        name = _register_service(step, "1-mytest-wrk-0", services)
-        assert name == "svc-1-mytest-wrk-0-server"
+        name = _register_service(step, "t1-mytest-wrk-0", services)
+        assert name == "svc-t1-mytest-wrk-0-server"
         assert services["server"]["name"] == name
         assert services["server"]["url"] == f"http://{name}:8080"
 
     def test_sweep_entries_get_unique_service_names(self):
         step = self._make_dag_step()
         services: dict = {}
-        name_a = _register_service(step, "1-mytest-wrk-0-sweep-a", services)
-        name_b = _register_service(step, "1-mytest-wrk-0-sweep-b", services)
+        name_a = _register_service(step, "t1-mytest-wrk-0-sweep-a", services)
+        name_b = _register_service(step, "t1-mytest-wrk-0-sweep-b", services)
         assert name_a != name_b
         assert "sweep-a" in name_a
         assert "sweep-b" in name_b
@@ -808,7 +809,7 @@ TC_DATA = {
 }
 
 
-def _loaded_test(name="mytest", test_id="1", timeout=None):
+def _loaded_test(name="mytest", test_id="t1", timeout=None):
     spec = TestSpec(
         source={"ginkgo": "t.go"},
         dag=[{"name": "run", "image": "img", "labelFilter": "pass-fail"}],
@@ -839,7 +840,7 @@ class TestAddPersistentSteps:
             steps,
             dag_step,
             "s-1-t-wrk-0",
-            "1-t-wrk-0",
+            "t1-t-wrk-0",
             "wrk-0",
             "wrk-0",
             _loaded_test(),
@@ -867,7 +868,7 @@ class TestAddPersistentSteps:
             steps,
             dag_step,
             "s-1-t-wrk-0",
-            "1-t-wrk-0",
+            "t1-t-wrk-0",
             "wrk-0",
             "wrk-0",
             _loaded_test(),
@@ -879,7 +880,7 @@ class TestAddPersistentSteps:
             env,
             "node",
         )
-        assert steps[0].config["service_name"] == "svc-1-t-wrk-0-server"
+        assert steps[0].config["service_name"] == "svc-t1-t-wrk-0-server"
 
     def test_sidecar_jinja_rendering(self, env, tc):
         node_spec = {
@@ -912,7 +913,7 @@ class TestAddPersistentSteps:
             steps,
             dag_step,
             "s-1-t-wrk-0",
-            "1-t-wrk-0",
+            "t1-t-wrk-0",
             "wrk-0",
             "wrk-0",
             _loaded_test(),
@@ -955,7 +956,7 @@ class TestAddEphemeralSteps:
             steps,
             dag_step,
             "s-1-t-wrk-0",
-            "1-t-wrk-0",
+            "t1-t-wrk-0",
             "wrk-0",
             "wrk-0",
             _loaded_test(),
@@ -990,7 +991,7 @@ class TestAddEphemeralSteps:
             steps,
             dag_step,
             "s-1-t-wrk-0",
-            "1-t-wrk-0",
+            "t1-t-wrk-0",
             "wrk-0",
             "wrk-0",
             _loaded_test(),
@@ -1004,8 +1005,8 @@ class TestAddEphemeralSteps:
         )
         assert len(steps) == 6
         res_names = [s.resource_name for s in steps]
-        assert "1-t-wrk-0-bench-t1" in res_names
-        assert "1-t-wrk-0-bench-t4" in res_names
+        assert "t1-t-wrk-0-bench-t1" in res_names
+        assert "t1-t-wrk-0-bench-t4" in res_names
 
     def test_sweep_service_names_unique(self, env, tc):
         dag_step = DAGStep(
@@ -1025,7 +1026,7 @@ class TestAddEphemeralSteps:
             steps,
             dag_step,
             "s-1-t-wrk-0",
-            "1-t-wrk-0",
+            "t1-t-wrk-0",
             "wrk-0",
             "wrk-0",
             _loaded_test(),
@@ -1061,7 +1062,7 @@ class TestValidateNodeResources:
 
     def _test(self, dag):
         spec = TestSpec(source={"ginkgo": "t.go"}, dag=dag)
-        return LoadedTest(name="t", spec=spec, go_source="x", test_id="1")
+        return LoadedTest(name="t", spec=spec, go_source="x", test_id="t1")
 
     def test_passes_when_within_capacity(self, env):
         dag = [
@@ -1223,7 +1224,7 @@ class TestResourceTemplate:
         ctx = {
             "api_version": "v1",
             "kind": "ConfigMap",
-            "resource_name": "1-test-my-cm",
+            "resource_name": "t1-test-my-cm",
             "namespace": "ns",
             "managed_by_label": "uat",
             "test": "mytest",
@@ -1234,7 +1235,7 @@ class TestResourceTemplate:
         doc = yaml.safe_load(content)
         assert doc["apiVersion"] == "v1"
         assert doc["kind"] == "ConfigMap"
-        assert doc["metadata"]["name"] == "1-test-my-cm"
+        assert doc["metadata"]["name"] == "t1-test-my-cm"
         assert doc["metadata"]["namespace"] == "ns"
         assert doc["metadata"]["labels"]["test"] == "mytest"
         assert doc["metadata"]["labels"]["app.kubernetes.io/managed-by"] == "uat"
@@ -1276,7 +1277,7 @@ class TestResourceTemplate:
         ctx = {
             "api_version": "inference.networking.k8s.io/v1",
             "kind": "InferencePool",
-            "resource_name": "1-llm-d-pool",
+            "resource_name": "t1-llm-d-pool",
             "namespace": "ns",
             "managed_by_label": "uat",
             "test": "llm-d",
@@ -1319,8 +1320,8 @@ class TestAddResourceSteps:
         add_resource_steps(
             steps,
             dag_step,
-            "1-t-wrk-0",
-            "1-t-wrk-0",
+            "t1-t-wrk-0",
+            "t1-t-wrk-0",
             node="wrk-0",
             step_node="wrk-0",
             test=_loaded_test(),
@@ -1349,8 +1350,8 @@ class TestAddResourceSteps:
         add_resource_steps(
             steps,
             dag_step,
-            "1-t-wrk-0",
-            "1-t-wrk-0",
+            "t1-t-wrk-0",
+            "t1-t-wrk-0",
             node="wrk-0",
             step_node="wrk-0",
             test=_loaded_test(),
@@ -1360,7 +1361,7 @@ class TestAddResourceSteps:
             jinja_env=env,
             scope="node",
         )
-        assert steps[0].resource_name == "1-t-wrk-0-pool"
+        assert steps[0].resource_name == "t1-t-wrk-0-pool"
 
     def test_manifest_has_harness_labels(self, env, tc):
         dag_step = DAGStep(
@@ -1375,8 +1376,8 @@ class TestAddResourceSteps:
         add_resource_steps(
             steps,
             dag_step,
-            "1-t-wrk-0",
-            "1-t-wrk-0",
+            "t1-t-wrk-0",
+            "t1-t-wrk-0",
             node="wrk-0",
             step_node="wrk-0",
             test=_loaded_test(),
@@ -1413,8 +1414,8 @@ class TestAddResourceSteps:
         add_resource_steps(
             steps,
             dag_step,
-            "1-t",
-            "1-t",
+            "t1-t",
+            "t1-t",
             node="",
             step_node="",
             test=test,
@@ -1443,8 +1444,8 @@ class TestAddResourceSteps:
         add_resource_steps(
             steps,
             dag_step,
-            "1-t",
-            "1-t",
+            "t1-t",
+            "t1-t",
             node="",
             step_node="",
             test=_loaded_test(),
@@ -1467,8 +1468,8 @@ class TestTeardownResourceTypes:
         add_teardown_steps(
             steps,
             has_persistent=True,
-            step_prefix="1-t",
-            res_prefix="1-t",
+            step_prefix="t1-t",
+            res_prefix="t1-t",
             selector="test=t",
             step_node="",
             test=_loaded_test(),
@@ -1482,8 +1483,8 @@ class TestTeardownResourceTypes:
         add_teardown_steps(
             steps,
             has_persistent=True,
-            step_prefix="1-t",
-            res_prefix="1-t",
+            step_prefix="t1-t",
+            res_prefix="t1-t",
             selector="test=t",
             step_node="",
             test=_loaded_test(),
@@ -1495,3 +1496,125 @@ class TestTeardownResourceTypes:
                 s.config["resource_types"]
                 == "pods,services,deployments,ConfigMap,InferencePool"
             )
+
+
+# -- load_config scope validation ---------------------------------------------
+
+
+class TestLoadConfigScopeValidation:
+    _CLUSTER_YAML = (
+        "spec:\n"
+        "  nodes:\n"
+        "    - name: wrk-0\n"
+        "      componentValidation:\n"
+        "        sanity:\n"
+        "          nvidia.com/gpu: 4\n"
+        "  namespace: ns\n"
+        "  peerNamespace: ns-peer\n"
+        "  storage:\n"
+        "    pvc: pvc\n"
+        "    basePath: /results\n"
+    )
+
+    _GO_SOURCE = "package t\n"
+
+    def _write_test_yaml(self, lib_dir, name, supported_scopes):
+        scopes_yaml = "\n".join(f"    - {s}" for s in supported_scopes)
+        content = (
+            f"apiVersion: uat.openshift.io/v1\n"
+            f"kind: Test\n"
+            f"metadata:\n"
+            f"  name: {name}\n"
+            f"  supportedScopes:\n"
+            f"{scopes_yaml}\n"
+            f"spec:\n"
+            f"  source:\n"
+            f"    ginkgo: {name}.go\n"
+            f"  dag:\n"
+            f"    - name: runner\n"
+            f"      image: img:latest\n"
+            f"      labelFilter: pass-fail\n"
+        )
+        (lib_dir / f"{name}.yaml").write_text(content)
+        (lib_dir / f"{name}.go").write_text(self._GO_SOURCE)
+
+    def _write_suite(self, path, tests):
+        entries = ""
+        for name, scope in tests:
+            entries += f"    - name: {name}\n      scope: {scope}\n"
+        content = (
+            "apiVersion: uat.openshift.io/v1\n"
+            "kind: TestSuite\n"
+            "metadata:\n"
+            "  name: test-suite\n"
+            "spec:\n"
+            f"  tests:\n{entries}"
+        )
+        path.write_text(content)
+
+    def test_accepted_scope(self, tmp_path):
+        lib_dir = tmp_path / "lib"
+        lib_dir.mkdir()
+        self._write_test_yaml(lib_dir, "mytest", ["node", "project"])
+        suite_path = tmp_path / "suite.yaml"
+        self._write_suite(suite_path, [("mytest", "node")])
+        cluster_path = tmp_path / "cluster.yaml"
+        cluster_path.write_text(self._CLUSTER_YAML)
+
+        _, _, tests = load_config(suite_path, lib_dir, cluster_path)
+        assert len(tests) == 1
+        assert tests[0].scope == "node"
+
+    def test_rejected_scope(self, tmp_path):
+        lib_dir = tmp_path / "lib"
+        lib_dir.mkdir()
+        self._write_test_yaml(lib_dir, "mytest", ["node", "cluster"])
+        suite_path = tmp_path / "suite.yaml"
+        self._write_suite(suite_path, [("mytest", "project")])
+        cluster_path = tmp_path / "cluster.yaml"
+        cluster_path.write_text(self._CLUSTER_YAML)
+
+        with pytest.raises(ValueError, match="does not support scope 'project'"):
+            load_config(suite_path, lib_dir, cluster_path)
+
+    def test_single_scope(self, tmp_path):
+        lib_dir = tmp_path / "lib"
+        lib_dir.mkdir()
+        self._write_test_yaml(lib_dir, "mytest", ["cluster"])
+        suite_path = tmp_path / "suite.yaml"
+        self._write_suite(suite_path, [("mytest", "cluster")])
+        cluster_path = tmp_path / "cluster.yaml"
+        cluster_path.write_text(self._CLUSTER_YAML)
+
+        _, _, tests = load_config(suite_path, lib_dir, cluster_path)
+        assert tests[0].scope == "cluster"
+
+    def test_all_scopes_accepted(self, tmp_path):
+        lib_dir = tmp_path / "lib"
+        lib_dir.mkdir()
+        self._write_test_yaml(lib_dir, "t1", ["node", "cluster", "project"])
+        self._write_test_yaml(lib_dir, "t2", ["node", "cluster", "project"])
+        self._write_test_yaml(lib_dir, "t3", ["node", "cluster", "project"])
+        suite_path = tmp_path / "suite.yaml"
+        self._write_suite(
+            suite_path, [("t1", "node"), ("t2", "cluster"), ("t3", "project")]
+        )
+        cluster_path = tmp_path / "cluster.yaml"
+        cluster_path.write_text(self._CLUSTER_YAML)
+
+        _, _, tests = load_config(suite_path, lib_dir, cluster_path)
+        assert len(tests) == 3
+        assert [t.scope for t in tests] == ["node", "cluster", "project"]
+
+    def test_second_test_rejected(self, tmp_path):
+        lib_dir = tmp_path / "lib"
+        lib_dir.mkdir()
+        self._write_test_yaml(lib_dir, "ok", ["node", "cluster", "project"])
+        self._write_test_yaml(lib_dir, "bad", ["node"])
+        suite_path = tmp_path / "suite.yaml"
+        self._write_suite(suite_path, [("ok", "project"), ("bad", "project")])
+        cluster_path = tmp_path / "cluster.yaml"
+        cluster_path.write_text(self._CLUSTER_YAML)
+
+        with pytest.raises(ValueError, match="'bad' does not support scope 'project'"):
+            load_config(suite_path, lib_dir, cluster_path)

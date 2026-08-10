@@ -8,6 +8,9 @@ metadata:
     Colocated prefill/decode disaggregated inference with NIXL KV transfer
     over cuda_ipc/NVLink. Designed for single-node clusters without RDMA.
     Bypasses EPP and Envoy by colocating all components in a single pod.
+  supportedScopes:
+    - node
+    - cluster
 spec:
   source:
     ginkgo: llm-d-local.go

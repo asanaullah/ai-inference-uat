@@ -2,15 +2,51 @@
 
 This directory contains the test definitions used to validate AI inference platforms on OpenShift. Each test consists of a YAML definition that the UAT framework consumes and a Ginkgo test file that gets compiled into a binary and run inside a pod. A separate test suite YAML file controls which tests run, in what order, and what happens when one fails.
 
+## Categories
+
+### Preflight
+Platform prerequisites. Checks that must pass before GPU workloads run.
+
+| Test | Description |
+|------|-------------|
+| [platform-check](#1-platform-check) | RBAC permissions and API group availability |
+| [component](#2-component) | Node hardware and software validation |
+| [iperf3](#3-iperf3) | Inter-node TCP bandwidth |
+| [ping](#4-ping) | Cross-namespace service connectivity |
+
+### Operator
+Model serving through cluster operators and CRDs.
+
+| Test | Description |
+|------|-------------|
+| [kserve](#5-kserve) | KServe InferenceService deployment and inference validation |
+
+### Single-GPU Performance
+Inference benchmarks on a single GPU.
+
+| Test | Description |
+|------|-------------|
+| [guidellm](#6-guidellm) | vLLM + guidellm benchmark sweeps |
+| [inference-perf](#7-inference-perf) | vLLM + inference-perf benchmark sweeps |
+
+### Multi-GPU Performance
+Workloads that stress GPU-to-GPU communication fabrics.
+
+| Test | Description |
+|------|-------------|
+| [chunked-prefill](#8-chunked-prefill) | NCCL over NVLink, tensor-parallel inference |
+| [llm-d-local](#9-llm-d-local) | NIXL over NVLink, disaggregated prefill/decode |
+
+### Interface
+User-facing interfaces for chat and notebook workflows.
+
+| Test | Description |
+|------|-------------|
+| chat | Chat UI backed by a vLLM inference server *(planned)* |
+| notebook | Jupyter notebook with GPUs as a dev environment *(planned)* |
+
 ## Tests
 
-1. [platform-check](#1-platform-check) — RBAC and API group validation
-2. [component](#2-component) — Node hardware and software validation
-3. [guidellm](#3-guidellm) — Single-GPU inference benchmark (guidellm)
-4. [inference-perf](#4-inference-perf) — Single-GPU inference benchmark (inference-perf)
-5. [llm-d-local](#5-llm-d-local) — Colocated prefill/decode disaggregated inference with NIXL over NVLink
-6. [chunked-prefill](#6-chunked-prefill) — All-GPU tensor-parallel inference with chunked prefill
-7. [iperf3](#7-iperf3) — Inter-node TCP bandwidth
 
 ---
 
@@ -63,6 +99,7 @@ The in-cluster Kubernetes client must work from the pod (`rest.InClusterConfig()
 ### Design rationale
 
 The permission checks are there to verify that the test pod is sandboxed. If any of them come back as allowed, the test fails because it means the ServiceAccount has more privileges than it should. This guards against accidentally running the test suite with an overly permissive ServiceAccount. The API group checks verify that the cluster has the CRDs that downstream tests depend on. For example, the llm-d test needs `inference.networking.k8s.io` for InferencePool resources. Finding out about a missing CRD here gives a much clearer error message than a cryptic failure partway through a later test. The `nonexistent.example.io` entry with expected `"no"` is a negative control that confirms the API group check logic is actually working and not just returning `"yes"` for everything.
+
 
 ---
 
@@ -130,9 +167,145 @@ The assertions are grouped into three categories:
 
 The pod requests all of the node's GPUs because `nvidia-smi topo -m` only reports topology for GPUs that are visible to the container. Without requesting all of them, NVLink validation would be incomplete. The cluster spec is embedded at compile time rather than loaded from a file or configmap because the test pod does not have access to the host filesystem and should not depend on external configmaps being present. The memory check allows a 5% tolerance because the kernel reserves memory for page tables, device mappings, and other overhead, so `/proc/meminfo` always reports less than the physical DIMM capacity. NVLink topology validation currently only supports all-to-all because that is the topology used by current SXM-based GPU nodes (DGX, HGX). Other topologies like ring or tree would need different validation logic. The C-state check iterates through sysfs entries under `cpuidle/state*/disable` because deep C-states (C3 and beyond) add wake-up latency that can affect interrupt-driven workloads like RDMA transfers and GPU-to-GPU communication.
 
+
 ---
 
-## 3. guidellm
+## 3. iperf3
+
+### Purpose
+
+This test measures TCP bandwidth between every pair of nodes in the cluster using iperf3. It validates that the pod network can sustain the throughput needed for inter-node communication such as NCCL allreduce over TCP or KV cache transfers without RDMA.
+
+### Architecture
+
+```
+iperf-server [persistent, node 0 of pair]
+    |
+    +--- iperf-client [pass-fail, ephemeral, node 1 of pair]
+```
+
+The test uses `permutation` placement with `setSize: 2`, so for N nodes it produces N*(N-1) test runs covering every ordered pair (A->B and B->A are separate tests). This catches asymmetric bandwidth issues caused by network topology or switch oversubscription.
+
+### Infrastructure
+
+| Name | Image | GPUs | Service | Key config |
+|------|-------|------|---------|------------|
+| iperf-server | `networkstatic/iperf3:latest` | none | headless ClusterIP :5201 | `iperf3 -s` |
+| iperf-client | `networkstatic/iperf3:latest` | none | none | `SERVER_HOST` env |
+
+### Pass-fail assertions
+
+1. TCP connection to server on port 5201 succeeds within 10 seconds
+2. `iperf3 -c <host> -t 10 -J` runs successfully and measured bandwidth is greater than zero
+
+Bandwidth in Gbps is reported via Ginkgo `AddReportEntry`.
+
+### Prerequisites
+
+At least 2 nodes must be present in the cluster. The pod network must allow TCP connections on port 5201 between nodes. The iperf3 container image must be accessible from the cluster.
+
+### Design rationale
+
+The test uses `permutation` placement rather than `combination` because A->B and B->A are tested separately. Asymmetric bandwidth (due to network topology, switch oversubscription, or misconfigured QoS) would only show up if both directions are measured independently. The `-J` flag produces JSON output which is parsed directly for the `bits_per_second` value.
+
+
+---
+
+## 4. ping
+
+### Purpose
+
+This test validates cross-namespace service connectivity by deploying simple HTTP servers in both the project and peer namespaces, then running connectivity checks from each side. A pod in the project namespace should be able to reach its own service but not the peer service by short name (namespace isolation). A pod in the peer namespace should be able to reach both its local peer service and the project service via cross-namespace FQDN.
+
+### Architecture
+
+```
+project-server [persistent, project namespace]
+    |
+peer-server [persistent, peer namespace]
+    |
+    +--- project-check [pass-fail, ephemeral, project namespace]
+    |        own service by short name ✓
+    |        peer service by short name ✗
+    |        peer service by FQDN ✗
+    |
+    +--- peer-check [pass-fail, ephemeral, peer namespace]
+             own service by short name ✓
+             project service by short name ✗
+             project service by FQDN ✗
+```
+
+### Infrastructure
+
+| Name | Image | GPUs | Service | Key config |
+|------|-------|------|---------|------------|
+| project-server | `registry.redhat.io/ubi9/ubi:latest` | none | headless ClusterIP :8080 | `python3 -m http.server 8080` |
+| peer-server | `registry.redhat.io/ubi9/ubi:latest` | none | headless ClusterIP :8080 (peer namespace) | `python3 -m http.server 8080` |
+| project-check | `registry.redhat.io/ubi9/ubi:latest` | none | none | `OWN_URL`, `OTHER_SHORT_URL`, `OTHER_FQDN_URL` env |
+| peer-check | `registry.redhat.io/ubi9/ubi:latest` | none | none (peer namespace) | `OWN_URL`, `OTHER_SHORT_URL`, `OTHER_FQDN_URL` env |
+
+### Pass-fail assertions
+
+Both project-check and peer-check run the same three assertions with symmetric env vars:
+
+1. HTTP GET to own service by short name returns 200 (service reachable in own namespace)
+2. HTTP GET to other service by short name fails (DNS does not resolve across namespaces)
+3. HTTP GET to other service by FQDN fails (network policy blocks cross-namespace traffic)
+
+### Prerequisites
+
+The peer namespace must be configured in the cluster spec (`peerNamespace`). Both namespaces must have the RBAC permissions to create pods and services. The `serverConfig.projectNamespace` and `serverConfig.peerNamespace` must match the cluster spec.
+
+### Design rationale
+
+The test uses Python's built-in `http.server` module rather than nginx because it runs as non-root without any configuration, which works with OpenShift's default security context. Both checks run identical assertions with symmetric env vars: own service reachable, other service unreachable by short name (DNS scoping), other service unreachable by FQDN (network policy). This validates both DNS namespace isolation and network-level cross-namespace blocking.
+
+
+---
+
+## 5. kserve
+
+### Purpose
+
+This test validates that the KServe operator can deploy and serve a model through the InferenceService CRD. It creates an InferenceService in RawDeployment mode with vLLM as the model server, waits for the endpoint to become available, and then runs health, model, and inference checks against it. This confirms the operator stack is functional before relying on it for production workloads.
+
+### Architecture
+
+```
+isvc [resourceConfig, InferenceService CRD]
+    |
+    +--- test-runner [pass-fail, ephemeral]
+             polls endpoint until ready (10 min timeout)
+             health / models / inference checks
+```
+
+The InferenceService is created as a resource step. KServe processes the CRD and creates a Deployment and Service in RawDeployment mode. The test runner pod polls the KServe-created service until the model server is healthy, then runs the assertions.
+
+### Infrastructure
+
+| Name | Image | GPUs | Service | Key config |
+|------|-------|------|---------|------------|
+| isvc | (KServe CRD, operator creates the pod) | 1 (configurable via `serverConfig.gpuCount`) | KServe-managed `{name}-predictor` :8080 | `--max-model-len=10000 --gpu-memory-utilization=0.6` |
+| test-runner | `registry.redhat.io/ubi9/ubi:latest` | none | none | `SERVICE_URL`, `MODEL_NAME` env |
+
+### Pass-fail assertions
+
+1. Endpoint becomes available within 10 minutes (polls `/health` every 15s)
+2. Model is loaded (`GET /v1/models` returns non-empty `data` array)
+3. Inference request succeeds (`POST /v1/completions` returns valid response with choices)
+
+### Prerequisites
+
+The KServe operator must be installed and the `serving.kserve.io` API group must be available. The namespace must have RBAC permissions to create InferenceService resources. The models PVC must contain the model weights. At least one GPU must be available for the InferenceService pod to schedule.
+
+### Design rationale
+
+The test uses the `containers` predictor (inline container spec) rather than a separate ServingRuntime so the entire test is self-contained in a single CRD. The cluster defaults to RawDeployment mode, so no deployment mode annotation is needed. GPU count and models PVC are in `serverConfig` rather than `nodeSpec` so the test is scope-agnostic. The 10-minute polling timeout accounts for image pull time and model loading on first run.
+
+
+---
+
+## 6. guidellm
 
 ### Purpose
 
@@ -184,9 +357,10 @@ At least one GPU must be available for the server pod to schedule. The models PV
 
 `gpu-memory-utilization=0.6` leaves headroom to avoid OOM on nodes with smaller GPUs. `max-model-len=10000` caps the context window to reduce GPU memory usage, since this test is about measuring baseline inference performance rather than pushing context length limits. `HOME=/tmp` is set because vLLM writes cache files to `$HOME` and the container user may not have a writable home directory.
 
+
 ---
 
-## 4. inference-perf
+## 7. inference-perf
 
 ### Purpose
 
@@ -238,9 +412,60 @@ At least one GPU must be available for the server pod to schedule. The models PV
 
 `gpu-memory-utilization=0.6` leaves headroom to avoid OOM on nodes with smaller GPUs. `max-model-len=10000` caps the context window to reduce GPU memory usage. `HOME=/tmp` is set because vLLM writes cache files to `$HOME` and the container user may not have a writable home directory. inference-perf uses dot-separated flag names (`server.type`, `load.stages`, etc.) which the framework converts to `--server.type=vllm` style flags. `server.ignore_eos=true` forces the model to generate exactly the requested number of output tokens regardless of EOS token generation, which ensures consistent benchmark results across runs. `load.stages` is a JSON string within a YAML string, so watch for quoting issues when modifying the sweep entries.
 
+
 ---
 
-## 5. llm-d-local
+## 8. chunked-prefill
+
+### Purpose
+
+This test deploys a single vLLM instance that uses all available GPUs under one tensor-parallel group with chunked prefill enabled. All GPUs work together in a single TP group where inter-GPU communication happens through NCCL allreduce over NVLink. This validates multi-GPU inference performance without the overhead of KV cache transfer between separate instances.
+
+### Architecture
+
+```
+vllm-server [persistent]
+    |
+    +--- pass-fail [ephemeral]
+    |
+    +--- sweep [ephemeral]
+             stress (ramped: 0.5 → 1 → 1.5 → 2 req/s)
+```
+
+The vLLM server stays up for both the pass-fail and sweep phases.
+
+### Infrastructure
+
+| Name | Image | GPUs | Service | Key config |
+|------|-------|------|---------|------------|
+| vllm-server | `ghcr.io/llm-d/llm-d-cuda:v0.8.0` | All GPUs | headless ClusterIP :8000 | `--tensor-parallel-size=<all GPUs> --enable-chunked-prefill` |
+| pass-fail | `registry.redhat.io/ubi9/ubi:latest` | none | none | `SERVER_URL`, `MODEL_NAME` env |
+| sweep | `quay.io/inference-perf/inference-perf:latest` | none | none | `SERVER_URL`, `SWEEP_COMMAND` env |
+
+### Pass-fail assertions
+
+1. Server is healthy (HTTP GET `/health` returns 200)
+2. Model is loaded (HTTP GET `/v1/models` returns non-empty `data` array)
+3. Server serves inference requests (POST `/v1/completions` returns valid response)
+
+### Sweep entries
+
+| ID | Load profile | Duration | Data |
+|----|-------------|----------|------|
+| stress | Ramped stages: 0.5 → 1 → 1.5 → 2 req/s | 4 × 60s | shared_prefix (500 groups × 1 prompt, 16000 system + 250 question tokens, 128 output tokens), worker_max_concurrency=1 |
+
+### Prerequisites
+
+All GPUs on the scheduling target must be available since the server requests all of them for tensor parallelism. The models PVC must be mounted at `/models` with the model weights present. Shared memory (`/dev/shm`) must support 16Gi for NCCL.
+
+### Design rationale
+
+Chunked prefill allows vLLM to interleave prefill and decode batches, which improves GPU utilization and reduces time-to-first-token under load. The `--enable-chunked-prefill` flag is passed as a bare flag (value `~` in YAML) since it takes no argument.
+
+
+---
+
+## 9. llm-d-local
 
 ### Purpose
 
@@ -304,92 +529,3 @@ Block size is computed from GPU memory using the formula `((mem + 2560) // 5120)
 The stress test is specifically structured to minimize KV cache fragmentation, which is the main obstacle to achieving high transfer bandwidth. There are two sources of fragmentation. First, concurrent requests cause vLLM's block allocator to interleave block IDs across requests, which defeats NIXL descriptor merging and drops per-transfer bandwidth significantly. The stress test uses `worker_max_concurrency=1` to serialize requests and avoid this. Second, prefix caching causes fragmentation because when vLLM retains KV cache blocks for shared prefixes, new requests reuse those cached prefix blocks but allocate fresh blocks for the unique suffix in scattered free slots between cached entries. The stress test uses `num_groups=500, num_prompts_per_group=1` so that each request has a unique prefix and never gets a cache hit, keeping block allocation contiguous.
 
 `UCX_RNDV_PIPELINE_SHM_ENABLE=no` disables the default behavior of staging GPU-to-GPU transfers through host shared memory, forcing direct cuda_ipc transfers over NVLink. NIXL side-channel ports must differ between prefill (5557) and decode (5558) since both bind to the pod IP.
-
----
-
-## 6. chunked-prefill
-
-### Purpose
-
-This test deploys a single vLLM instance that uses all available GPUs under one tensor-parallel group with chunked prefill enabled. All GPUs work together in a single TP group where inter-GPU communication happens through NCCL allreduce over NVLink. This validates multi-GPU inference performance without the overhead of KV cache transfer between separate instances.
-
-### Architecture
-
-```
-vllm-server [persistent]
-    |
-    +--- pass-fail [ephemeral]
-    |
-    +--- sweep [ephemeral]
-             stress (ramped: 0.5 → 1 → 1.5 → 2 req/s)
-```
-
-The vLLM server stays up for both the pass-fail and sweep phases.
-
-### Infrastructure
-
-| Name | Image | GPUs | Service | Key config |
-|------|-------|------|---------|------------|
-| vllm-server | `ghcr.io/llm-d/llm-d-cuda:v0.8.0` | All GPUs | headless ClusterIP :8000 | `--tensor-parallel-size=<all GPUs> --enable-chunked-prefill` |
-| pass-fail | `registry.redhat.io/ubi9/ubi:latest` | none | none | `SERVER_URL`, `MODEL_NAME` env |
-| sweep | `quay.io/inference-perf/inference-perf:latest` | none | none | `SERVER_URL`, `SWEEP_COMMAND` env |
-
-### Pass-fail assertions
-
-1. Server is healthy (HTTP GET `/health` returns 200)
-2. Model is loaded (HTTP GET `/v1/models` returns non-empty `data` array)
-3. Server serves inference requests (POST `/v1/completions` returns valid response)
-
-### Sweep entries
-
-| ID | Load profile | Duration | Data |
-|----|-------------|----------|------|
-| stress | Ramped stages: 0.5 → 1 → 1.5 → 2 req/s | 4 × 60s | shared_prefix (500 groups × 1 prompt, 16000 system + 250 question tokens, 128 output tokens), worker_max_concurrency=1 |
-
-### Prerequisites
-
-All GPUs on the scheduling target must be available since the server requests all of them for tensor parallelism. The models PVC must be mounted at `/models` with the model weights present. Shared memory (`/dev/shm`) must support 16Gi for NCCL.
-
-### Design rationale
-
-Chunked prefill allows vLLM to interleave prefill and decode batches, which improves GPU utilization and reduces time-to-first-token under load. The `--enable-chunked-prefill` flag is passed as a bare flag (value `~` in YAML) since it takes no argument.
-
----
-
-## 7. iperf3
-
-### Purpose
-
-This test measures TCP bandwidth between every pair of nodes in the cluster using iperf3. It validates that the pod network can sustain the throughput needed for inter-node communication such as NCCL allreduce over TCP or KV cache transfers without RDMA.
-
-### Architecture
-
-```
-iperf-server [persistent, node 0 of pair]
-    |
-    +--- iperf-client [pass-fail, ephemeral, node 1 of pair]
-```
-
-The test uses `permutation` placement with `setSize: 2`, so for N nodes it produces N*(N-1) test runs covering every ordered pair (A→B and B→A are separate tests). This catches asymmetric bandwidth issues caused by network topology or switch oversubscription.
-
-### Infrastructure
-
-| Name | Image | GPUs | Service | Key config |
-|------|-------|------|---------|------------|
-| iperf-server | `networkstatic/iperf3:latest` | none | headless ClusterIP :5201 | `iperf3 -s` |
-| iperf-client | `networkstatic/iperf3:latest` | none | none | `SERVER_HOST` env |
-
-### Pass-fail assertions
-
-1. TCP connection to server on port 5201 succeeds within 10 seconds
-2. `iperf3 -c <host> -t 10 -J` runs successfully and measured bandwidth is greater than zero
-
-Bandwidth in Gbps is reported via Ginkgo `AddReportEntry`.
-
-### Prerequisites
-
-At least 2 nodes must be present in the cluster. The pod network must allow TCP connections on port 5201 between nodes. The iperf3 container image must be accessible from the cluster.
-
-### Design rationale
-
-The test uses `permutation` placement rather than `combination` because A→B and B→A are tested separately. Asymmetric bandwidth (due to network topology, switch oversubscription, or misconfigured QoS) would only show up if both directions are measured independently. The `-J` flag produces JSON output which is parsed directly for the `bits_per_second` value.

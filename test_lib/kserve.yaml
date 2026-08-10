@@ -1,0 +1,67 @@
+# Assisted by Claude Opus 4.6
+apiVersion: uat.openshift.io/v1
+kind: Test
+metadata:
+  name: kserve
+  version: v0.0.1
+  description: KServe InferenceService deployment and inference validation
+  supportedScopes:
+    - node
+    - cluster
+    - project
+spec:
+  source:
+    ginkgo: kserve.go
+
+  serverConfig:
+    model: /models/ibm-granite/granite-3.3-8b-instruct
+    image: nvcr.io/nvidia/vllm:26.03-py3
+    gpuCount: "1"
+    modelsPVC: uat-models
+
+  dag:
+    - name: isvc
+      resourceConfig:
+        apiVersion: serving.kserve.io/v1beta1
+        kind: InferenceService
+        spec:
+          predictor:
+            containers:
+              - name: kserve-container
+                image: '{{ serverConfig.image }}'
+                command:
+                  - python
+                  - -m
+                  - vllm.entrypoints.openai.api_server
+                args:
+                  - '--model={{ serverConfig.model }}'
+                  - --port=8080
+                  - --max-model-len=10000
+                  - --gpu-memory-utilization=0.6
+                env:
+                  - name: HOME
+                    value: /tmp
+                ports:
+                  - containerPort: 8080
+                    protocol: TCP
+                resources:
+                  requests:
+                    nvidia.com/gpu: '{{ serverConfig.gpuCount }}'
+                  limits:
+                    nvidia.com/gpu: '{{ serverConfig.gpuCount }}'
+                volumeMounts:
+                  - name: models
+                    mountPath: /models
+            volumes:
+              - name: models
+                persistentVolumeClaim:
+                  claimName: '{{ serverConfig.modelsPVC }}'
+
+    - name: test-runner
+      image: registry.redhat.io/ubi9/ubi:9.8
+      labelFilter: pass-fail
+      env:
+        - name: SERVICE_URL
+          value: 'http://{{ k8sNamePrefix }}-isvc-predictor:8080'
+        - name: MODEL_NAME
+          value: '{{ serverConfig.model }}'

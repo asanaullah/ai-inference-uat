@@ -92,7 +92,7 @@ The file is validated on load with Pydantic (field types, metadata structure) an
 ```
 Cluster Pipeline (single flat pipeline):
   Setup:    apply-configmap → create-builder → build
-  Tests:    [tests in test_suite.yaml list order]
+  Tests:    [tests in test suite list order]
               node-scoped: parallel task chains (one per node), chained via runAfter
               cluster-scoped: one task chain per node set (sequential)
               project-scoped: single task chain (no node affinity)
@@ -122,7 +122,7 @@ Tests are organized into three scopes based on where and how they run:
 
 - **Project** — validates namespace-level resources with no node affinity. Project-scoped tests run as a single chain without `nodeSelector`, letting the scheduler place pods freely. Use for namespace quota checks, RBAC validation, service mesh configuration, or any test that operates at the project level rather than targeting specific hardware.
 
-Tests are registered in `test_suite.yaml` as an ordered list, each with a scope and failure policy:
+Tests are registered in the test suite (see `examples/all_tests.yaml`) as an ordered list, each with a scope and failure policy:
 
 ```yaml
 spec:
@@ -204,9 +204,9 @@ DAG pods also get a second mount at `/binaries` for access to compiled test bina
 
 The `setup/` directory contains Kubernetes manifests for one-time cluster preparation:
 
-- **`namespaces-and-pvcs.yaml`** — creates the `uat-project` namespace, a 100Gi RWX PVC for test results (`uat-project-storage`), and RBAC (Role + RoleBinding) granting the test user access to pods, services, configmaps, and workload APIs.
-- **`uat-models-pvc.yaml`** — creates a 500Gi RWX PVC (`uat-models`) for pre-downloaded model weights.
-- **`model-downloader.yaml`** — a one-shot pod that downloads HuggingFace models to the models PVC. Add models to the `MODELS` list and re-run.
+- **`namespaces-and-pvcs.yaml`** — creates the `uat-project` and `uat-peer` namespaces, a 100Gi RWX PVC for test results in each namespace (`uat-project-storage`, `uat-peer-storage`), and RBAC (Role + RoleBinding) in each namespace granting the test user access to pods, services, configmaps, and workload APIs.
+- **`uat-models-pvc.yaml`** — creates a 500Gi RWX PVC (`uat-models`) for pre-downloaded model weights in both namespaces.
+- **`model-downloader.yaml`** — one-shot pods (one per namespace) that download HuggingFace models to the models PVC. Add models to the `MODELS` list and re-run.
 - **`sanity_scan.py`** — a CLI tool that launches scanner pods on cluster nodes, scans hardware (GPU, CPU, memory, NUMA, InfiniBand, cpuset), and merges detected values into a cluster YAML's sanity block. Run with `python3 setup/sanity_scan.py --cluster cluster/ocp-test.yaml`.
 
 Apply in order:
@@ -217,6 +217,7 @@ oc apply -f setup/uat-models-pvc.yaml
 oc apply -f setup/model-downloader.yaml
 # wait for downloads to complete:
 oc logs -f model-downloader -n uat-project
+oc logs -f model-downloader -n uat-peer
 ```
 
 ## Quickstart
@@ -254,7 +255,7 @@ Output is written to `build/manual/` and `build/tekton/`.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--test-suite` | (required\*) | Path to `test_suite.yaml` |
+| `--test-suite` | (required\*) | Path to the test suite YAML |
 | `--test-lib` | (required\*) | Directory containing test definition YAMLs and Go source files |
 | `--cluster` | (required\*) | Path to the cluster config YAML |
 | `--config` | `config.yaml` | Path to the tool config |
@@ -309,11 +310,11 @@ oc get pipelineruns -w
 
 ## Adding a Custom Test
 
-Adding a test requires three things: an entry in `test_suite.yaml`, a test definition YAML, and a Ginkgo test file.
+Adding a test requires three things: an entry in the test suite, a test definition YAML, and a Ginkgo test file.
 
 ### 1. Register the Test
 
-Add the test to `test_suite.yaml`:
+Add the test to your test suite:
 
 ```yaml
 spec:
@@ -341,6 +342,9 @@ metadata:
   name: my-test
   version: v0.0.1
   description: Short description of what this test validates
+  supportedScopes:
+    - node
+    - project
 spec:
   source:
     ginkgo: my-test.go
@@ -418,6 +422,7 @@ Each test defines an ordered DAG of resources to deploy and run. DAG steps come 
 | `sidecars` | List of sidecar containers. Rendered as `initContainers` with `restartPolicy: Always` (native K8s sidecar pattern). Each sidecar has `name`, `image`, `command`, `args`, `env`, `ports`, `resources`, `volumeMounts` |
 | `resourceConfig` | Deploys an arbitrary K8s resource instead of a pod. Contains `apiVersion`, `kind`, and `spec` (dict with Jinja2-rendered values). Mutually exclusive with `persistsThroughSweep`, `parameterSweep`, and `sidecars` |
 | `serviceAccountName` | Service account for the generated pod |
+| `peer` | If `true`, this step runs in the peer namespace instead of the default namespace |
 
 ### Template Variables
 
@@ -427,7 +432,7 @@ Available in `command`, `env`, and `resources` values via Jinja2:
 |---|---|
 | `nodeSpec.*` | Full node spec from cluster config (e.g. `{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}`) |
 | `serverConfig.*` | Test-level config dict (e.g. `{{ serverConfig.model }}`) |
-| `services["name"].url` | URL of a DAG step's service |
+| `services["name"].url` | URL of a DAG step's service. Also available: `.name` (Kubernetes service name), `.port` (port number) |
 | `paramSweep.id` | Current sweep entry ID |
 | `paramSweep.command` | Resolved command list for the current sweep entry |
 | `timestamp` | Run identifier (`__TIMESTAMP__` placeholder) |
@@ -521,7 +526,7 @@ The merge is recursive for dict fields (`serverConfig`, `requirements`) — nest
 
 ### Cluster Config (`cluster/<name>.yaml`)
 
-Defines target nodes, namespace, and storage:
+Defines target nodes, namespace, storage, and optional peer namespace for cross-namespace tests:
 
 ```yaml
 spec:
@@ -537,16 +542,24 @@ spec:
             nvidia.com/gpu: NVIDIA-A100-SXM4-40GB
           # ... additional fields available as {{ nodeSpec.componentValidation.* }}
   namespace: my-namespace
+  peerNamespace: my-peer-namespace
   storage:
     pvc: my-pvc
     basePath: uat/results
     models:
       pvc: my-models-pvc     # optional: mounted read-only at /models on all DAG pods
+  peerStorage:               # optional: defaults to storage when omitted
+    pvc: my-peer-pvc
+    basePath: uat/results
+    models:
+      pvc: my-models-pvc
 ```
 
 The `compliance` section holds cluster-wide settings consumed by Go test binaries (e.g., the FIPS mode check in the component test). The harness passes these through via the embedded `cluster.yaml` — they are not used by the manifest generator.
 
 The optional `storage.models` section configures a separate volume for pre-downloaded model weights. When `models.pvc` is set, every DAG pod (both persistent and ephemeral) gets a read-only mount at `/models`. This decouples model storage from the results PVC and lets inference servers load weights from a shared cache (e.g. `--model /models/ibm-granite/granite-3.3-8b-instruct`) instead of downloading at runtime. When omitted, no models volume is mounted. `ModelsStorageConfig` is its own model so the backing store can be extended beyond PVC (e.g. to object storage or a CSI-based mount) without changing the rest of the storage config.
+
+The `peerNamespace` field names a second namespace for cross-namespace tests. DAG steps with `peer: true` deploy to this namespace. When present, the generator creates independent infrastructure (ConfigMap, builder pod, aggregator pod) in the peer namespace. The optional `peerStorage` section configures the peer namespace's PVC, base path, and models volume; when omitted, the primary `storage` config is used for both namespaces.
 
 The `name` field is the value matched against the `nodeSelectorKey` label (default: `kubernetes.io/hostname`). It is also used in step names for human readability. For Kubernetes resource names (pods, services, Tekton tasks), the generator sanitizes the node name: invalid characters are replaced with dashes, uppercase is lowercased, and names longer than 16 characters are truncated to 12 characters with a 4-character hash suffix. Short, simple names like `wrk-4` are used as-is; FQDN hostnames like `ip-10-0-1-42.ec2.internal` are automatically shortened.
 
@@ -580,7 +593,7 @@ All timeout values are integers in seconds.
 
 ### Per-Test Timeout and Failure Policy
 
-Each test in `test_suite.yaml` can override the default timeout and declare its own failure policy. Tests can be listed in any order and the same test can appear multiple times with different settings:
+Each test in the test suite can override the default timeout and declare its own failure policy. Tests can be listed in any order and the same test can appear multiple times with different settings:
 
 ```yaml
 spec:
@@ -854,7 +867,9 @@ tests/                Unit and integration tests
 scripts/
   aggregate.py        JUnit XML aggregation (deployed via ConfigMap)
 setup/
-  namespaces-and-pvcs.yaml  Namespaces, PVCs, and RBAC
+  namespaces-and-pvcs.yaml  Namespaces, PVCs, RBAC, and peer namespace infrastructure
+  uat-models-pvc.yaml       PVC for model storage
+  model-downloader.yaml     Job to download models to PVCs
   sanity_scan.py            CLI tool: launches scanner pods, scans hardware (GPU, CPU,
                             memory, NUMA, InfiniBand, cpuset), merges into cluster YAML
 templates/

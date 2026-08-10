@@ -7,6 +7,9 @@ metadata:
   description: >-
     Single vLLM instance using all node GPUs with chunked prefill enabled.
     Validates TP across all GPUs and NVLink utilization during inference.
+  supportedScopes:
+    - node
+    - cluster
 spec:
   source:
     ginkgo: chunked-prefill.go

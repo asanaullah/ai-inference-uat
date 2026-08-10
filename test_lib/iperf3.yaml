@@ -5,6 +5,10 @@ metadata:
   name: iperf3
   version: v0.0.1
   description: iperf3 TCP bandwidth measurement between two nodes
+  supportedScopes:
+    - node
+    - cluster
+    - project
 spec:
   source:
     ginkgo: iperf3.go

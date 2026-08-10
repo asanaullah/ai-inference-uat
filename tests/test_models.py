@@ -34,6 +34,7 @@ CLUSTER_SPEC_DATA = {
         }
     ],
     "namespace": "ns",
+    "peerNamespace": "ns-peer",
     "storage": {"pvc": "pvc", "basePath": "results"},
 }
 

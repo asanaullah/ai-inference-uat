@@ -30,7 +30,7 @@ def _test(
     dag=None,
     on_failure="continue",
     timeout=None,
-    test_id="1",
+    test_id="t1",
     placement=None,
 ):
     dag = dag or [{"name": "run", "image": "img", "labelFilter": "pass-fail"}]
@@ -101,8 +101,8 @@ class TestComputeClusterSteps:
             _test(), tc, "ns", "pvc", "results", env, nodes=nodes
         )
         names = [s.name for s in steps]
-        assert "1-t-run" in names
-        assert "1-t-finally-teardown" in names
+        assert "t1-t-run" in names
+        assert "t1-t-finally-teardown" in names
         assert all("set" not in n for n in names)
 
     def test_multi_set_has_set_segment(self, env, tc):
@@ -114,8 +114,8 @@ class TestComputeClusterSteps:
             _test(placement=placement), tc, "ns", "pvc", "results", env, nodes=nodes
         )
         names = [s.name for s in steps]
-        assert "1-t-set0-run" in names
-        assert "1-t-set1-run" in names
+        assert "t1-t-set0-run" in names
+        assert "t1-t-set1-run" in names
         assert len(mappings) == 2
 
     def test_set_size_validation(self, env, tc):
@@ -217,8 +217,8 @@ class TestComputeClusterSteps:
             _test(dag=dag), tc, "ns", "pvc", "results", env, nodes=nodes
         )
         names = [s.name for s in steps]
-        assert "1-t-teardown" in names
-        assert "1-t-finally-teardown" in names
+        assert "t1-t-teardown" in names
+        assert "t1-t-finally-teardown" in names
 
     def test_resource_validation_failure(self, env, tc):
         nodes = [_node("wrk-1", **{"nvidia.com/gpu": 2})]

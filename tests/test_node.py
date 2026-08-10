@@ -25,7 +25,7 @@ def _node(gpu_count=4):
     )
 
 
-def _test(name="t", dag=None, on_failure="continue", timeout=None, test_id="1"):
+def _test(name="t", dag=None, on_failure="continue", timeout=None, test_id="t1"):
     dag = dag or [{"name": "run", "image": "img", "labelFilter": "pass-fail"}]
     spec = TestSpec(
         source={"ginkgo": "t.go"},
@@ -64,9 +64,9 @@ class TestComputeNodeSteps:
             env,
         )
         names = [s.name for s in steps]
-        assert "1-t-wrk-1-run" in names
-        assert "1-t-wrk-1-cleanup-run" in names
-        assert "1-t-wrk-1-finally-teardown" in names
+        assert "t1-t-wrk-1-run" in names
+        assert "t1-t-wrk-1-cleanup-run" in names
+        assert "t1-t-wrk-1-finally-teardown" in names
 
     def test_persistent_generates_teardown(self, env, tc):
         dag = [
@@ -88,8 +88,8 @@ class TestComputeNodeSteps:
             env,
         )
         names = [s.name for s in steps]
-        assert "1-t-wrk-1-teardown" in names
-        assert "1-t-wrk-1-finally-teardown" in names
+        assert "t1-t-wrk-1-teardown" in names
+        assert "t1-t-wrk-1-finally-teardown" in names
 
     def test_on_failure_propagated(self, env, tc):
         for policy in ("continue", "skipTest", "abort"):
@@ -156,7 +156,7 @@ class TestComputeNodeSteps:
         )
         finally_steps = [s for s in steps if s.finally_step]
         assert len(finally_steps) == 1
-        assert finally_steps[0].name == "1-t-wrk-1-finally-teardown"
+        assert finally_steps[0].name == "t1-t-wrk-1-finally-teardown"
         non_finally = [s for s in steps if not s.finally_step]
         assert all(not s.finally_step for s in non_finally)
 
@@ -181,8 +181,8 @@ class TestComputeNodeSteps:
             env,
         )
         gen_names = [s.name for s in steps if s.type == "generate"]
-        assert "1-t-wrk-1-bench-e1" in gen_names
-        assert "1-t-wrk-1-bench-e2" in gen_names
+        assert "t1-t-wrk-1-bench-e1" in gen_names
+        assert "t1-t-wrk-1-bench-e2" in gen_names
 
     def test_persistent_with_sweep_rejected(self, env, tc):
         dag = [

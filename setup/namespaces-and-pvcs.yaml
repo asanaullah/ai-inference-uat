@@ -5,10 +5,28 @@ metadata:
   name: uat-project
 ---
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: uat-peer
+---
+apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: uat-project-storage
   namespace: uat-project
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-csi
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: uat-peer-storage
+  namespace: uat-peer
 spec:
   accessModes:
     - ReadWriteMany
@@ -45,7 +63,7 @@ rules:
     resources: ["pytorchjobs", "tfjobs", "mpijobs", "xgboostjobs"]
     verbs: ["create", "get", "list", "watch", "delete"]
   - apiGroups: ["serving.kserve.io"]
-    resources: ["inferenceservices"]
+    resources: ["inferenceservices", "servingruntimes"]
     verbs: ["create", "get", "list", "watch", "delete"]
   - apiGroups: ["ray.io"]
     resources: ["rayjobs", "rayclusters", "rayservices"]
@@ -56,6 +74,39 @@ kind: RoleBinding
 metadata:
   name: uat-user-asanaullah
   namespace: uat-project
+subjects:
+  - kind: User
+    name: asanaullah
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: uat-user-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: uat-user-role
+  namespace: uat-peer
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: uat-user-asanaullah
+  namespace: uat-peer
 subjects:
   - kind: User
     name: asanaullah

@@ -35,7 +35,7 @@ def _validate_service_names(steps: list[Step]) -> None:
 
 
 def _validate_unique_pod_names(steps: list[Step]) -> None:
-    pod_names: set[str] = set()
+    pod_names: set[tuple[str, str]] = set()
     for step in steps:
         pod_name = step.config.get("pod_name")
         if pod_name:
@@ -43,9 +43,12 @@ def _validate_unique_pod_names(steps: list[Step]) -> None:
                 raise ValueError(
                     f"Pod name '{pod_name}' is not a valid RFC 1123 subdomain"
                 )
-            if pod_name in pod_names:
-                raise ValueError(f"Duplicate pod name '{pod_name}'")
-            pod_names.add(pod_name)
+            key = (pod_name, step.namespace)
+            if key in pod_names:
+                raise ValueError(
+                    f"Duplicate pod name '{pod_name}' in namespace '{step.namespace}'"
+                )
+            pod_names.add(key)
 
 
 def compute_setup_steps(
@@ -96,6 +99,7 @@ def compute_setup_steps(
             config={"output": "manifest"},
             content=cm_content,
             phase="setup",
+            namespace=cs.namespace,
         )
     )
     steps.append(
@@ -105,6 +109,7 @@ def compute_setup_steps(
             config={"command": "apply", "probe": "none"},
             source=["apply-configmap"],
             phase="setup",
+            namespace=cs.namespace,
         )
     )
 
@@ -130,6 +135,7 @@ def compute_setup_steps(
             config={"output": "manifest"},
             content=builder_content,
             phase="setup",
+            namespace=cs.namespace,
         )
     )
     steps.append(
@@ -144,6 +150,7 @@ def compute_setup_steps(
             },
             source=["create-builder"],
             phase="setup",
+            namespace=cs.namespace,
         )
     )
 
@@ -158,6 +165,7 @@ def compute_setup_steps(
                 "args": ["bash", "/src/build.sh"],
             },
             phase="setup",
+            namespace=cs.namespace,
         )
     )
 
@@ -168,6 +176,7 @@ def compute_teardown_steps(
     tc: ToolConfig,
     cs: ClusterTestSpec,
     jinja_env: Environment,
+    has_peer_steps: bool = False,
 ) -> list[Step]:
     steps: list[Step] = []
 
@@ -194,6 +203,7 @@ def compute_teardown_steps(
             content=agg_content,
             finally_step=True,
             phase="teardown",
+            namespace=cs.namespace,
         )
     )
     steps.append(
@@ -209,6 +219,7 @@ def compute_teardown_steps(
             source=["create-aggregator"],
             finally_step=True,
             phase="teardown",
+            namespace=cs.namespace,
         )
     )
 
@@ -224,8 +235,72 @@ def compute_teardown_steps(
             },
             finally_step=True,
             phase="teardown",
+            namespace=cs.namespace,
         )
     )
+
+    if has_peer_steps:
+        peer_ns = cs.peer_namespace
+        peer_storage = cs.peer_storage or cs.storage
+        peer_agg_pod = f"peer-{tc.aggregator_pod_name}"
+        peer_timestamp_subpath = f"{peer_storage.base_path}/__TIMESTAMP__"
+        peer_agg_content = render_manifest(
+            jinja_env,
+            "support-pod.yaml.j2",
+            {
+                "pod_name": peer_agg_pod,
+                "namespace": peer_ns,
+                "managed_by_label": tc.managed_by_label,
+                "image": tc.aggregator_image,
+                "pvc": peer_storage.pvc,
+                "configmap_name": tc.configmap_name,
+                "configmap_mount": True,
+                "workspace_subpath": peer_timestamp_subpath,
+            },
+        )
+        steps.append(
+            Step(
+                name="create-peer-aggregator",
+                type="generate",
+                config={"output": "manifest"},
+                content=peer_agg_content,
+                finally_step=True,
+                phase="teardown",
+                namespace=peer_ns,
+            )
+        )
+        steps.append(
+            Step(
+                name="create-peer-aggregator",
+                type="command",
+                config={
+                    "command": "apply",
+                    "probe": "wait-ready",
+                    "pod_name": peer_agg_pod,
+                    "timeout": tc.aggregator_timeout,
+                },
+                source=["create-peer-aggregator"],
+                finally_step=True,
+                phase="teardown",
+                namespace=peer_ns,
+            )
+        )
+
+        steps.append(
+            Step(
+                name="peer-aggregate",
+                type="command",
+                config={
+                    "command": "exec",
+                    "probe": "none",
+                    "target": peer_agg_pod,
+                    "args": ["python", "/src/aggregate.py", "/uat_workspace"],
+                },
+                finally_step=True,
+                phase="teardown",
+                namespace=peer_ns,
+            )
+        )
 
     steps.append(
         Step(
@@ -239,8 +314,26 @@ def compute_teardown_steps(
             },
             finally_step=True,
             phase="teardown",
+            namespace=cs.namespace,
         )
     )
+
+    if has_peer_steps:
+        steps.append(
+            Step(
+                name="peer-cleanup",
+                type="command",
+                config={
+                    "command": "delete-all",
+                    "probe": "none",
+                    "configmap_name": tc.configmap_name,
+                    "managed_by_label": tc.managed_by_label,
+                },
+                finally_step=True,
+                phase="teardown",
+                namespace=cs.peer_namespace,
+            )
+        )
 
     return steps
 
@@ -358,6 +451,8 @@ def generate_steps(
         try:
             models_storage = cs.storage.models if cs.storage.models.pvc else None
             if test.scope == "node":
+                peer_storage = cs.peer_storage or cs.storage
+                peer_models = peer_storage.models if peer_storage.models.pvc else None
                 for node_spec in cs.nodes:
                     validate_node_resources(test, node_spec, jinja_env)
                     steps = compute_node_steps(
@@ -369,9 +464,15 @@ def generate_steps(
                         cs.storage.base_path,
                         jinja_env,
                         models_storage=models_storage,
+                        peer_namespace=cs.peer_namespace,
+                        peer_pvc=peer_storage.pvc,
+                        peer_base_path=peer_storage.base_path,
+                        peer_models_storage=peer_models,
                     )
                     test_steps.extend(steps)
             elif test.scope == "cluster":
+                peer_storage = cs.peer_storage or cs.storage
+                peer_models = peer_storage.models if peer_storage.models.pvc else None
                 cluster_steps, set_mappings = compute_cluster_steps(
                     test,
                     tc,
@@ -381,11 +482,17 @@ def generate_steps(
                     jinja_env,
                     nodes=cs.nodes,
                     models_storage=models_storage,
+                    peer_namespace=cs.peer_namespace,
+                    peer_pvc=peer_storage.pvc,
+                    peer_base_path=peer_storage.base_path,
+                    peer_models_storage=peer_models,
                 )
                 test_steps.extend(cluster_steps)
                 if set_mappings:
                     all_set_mappings[test.test_id] = set_mappings
             elif test.scope == "project":
+                peer_storage = cs.peer_storage or cs.storage
+                peer_models = peer_storage.models if peer_storage.models.pvc else None
                 test_steps.extend(
                     compute_project_steps(
                         test,
@@ -395,14 +502,125 @@ def generate_steps(
                         cs.storage.base_path,
                         jinja_env,
                         models_storage=models_storage,
+                        peer_namespace=cs.peer_namespace,
+                        peer_pvc=peer_storage.pvc,
+                        peer_base_path=peer_storage.base_path,
+                        peer_models_storage=peer_models,
                     )
                 )
         except (ValueError, TypeError, TemplateError) as e:
             print(f"Error computing steps for test {test.name}: {e}")
             raise SystemExit(1)
 
+    has_peer_steps = any(s.namespace == cs.peer_namespace for s in test_steps)
+
+    if has_peer_steps:
+        peer_storage = cs.peer_storage or cs.storage
+        peer_files: dict[str, str] = {}
+        for t in tests:
+            peer_files[f"{t.name}_test.go"] = t.go_source
+        peer_files["cluster.yaml"] = Path(cluster_path).read_text()
+        peer_files["test_suite.yaml"] = Path(test_suite_path).read_text()
+        peer_files["build.sh"] = render_template(
+            jinja_env,
+            "build.sh.j2",
+            {
+                "tests": list(dict.fromkeys(t.name for t in tests)),
+                "ginkgo_version": tc.ginkgo_version,
+            },
+        )
+        peer_files["aggregate.py"] = (Path(scripts_dir) / "aggregate.py").read_text()
+
+        peer_cm_content = render_manifest(
+            jinja_env,
+            "configmap.yaml.j2",
+            {
+                "configmap_name": tc.configmap_name,
+                "namespace": cs.peer_namespace,
+                "managed_by_label": tc.managed_by_label,
+                "files": peer_files,
+            },
+        )
+        setup_steps.append(
+            Step(
+                name="apply-peer-configmap",
+                type="generate",
+                config={"output": "manifest"},
+                content=peer_cm_content,
+                phase="setup",
+                namespace=cs.peer_namespace,
+            )
+        )
+        setup_steps.append(
+            Step(
+                name="apply-peer-configmap",
+                type="command",
+                config={"command": "apply", "probe": "none"},
+                source=["apply-peer-configmap"],
+                phase="setup",
+                namespace=cs.peer_namespace,
+            )
+        )
+
+        peer_binaries_subpath = f"{peer_storage.base_path}/__TIMESTAMP__/binaries"
+        peer_builder_content = render_manifest(
+            jinja_env,
+            "support-pod.yaml.j2",
+            {
+                "pod_name": tc.builder_pod_name,
+                "namespace": cs.peer_namespace,
+                "managed_by_label": tc.managed_by_label,
+                "image": tc.builder_image,
+                "pvc": peer_storage.pvc,
+                "configmap_name": tc.configmap_name,
+                "configmap_mount": True,
+                "workspace_subpath": peer_binaries_subpath,
+            },
+        )
+        setup_steps.append(
+            Step(
+                name="create-peer-builder",
+                type="generate",
+                config={"output": "manifest"},
+                content=peer_builder_content,
+                phase="setup",
+                namespace=cs.peer_namespace,
+            )
+        )
+        setup_steps.append(
+            Step(
+                name="create-peer-builder",
+                type="command",
+                config={
+                    "command": "apply",
+                    "probe": "wait-ready",
+                    "pod_name": tc.builder_pod_name,
+                    "timeout": tc.builder_timeout,
+                },
+                source=["create-peer-builder"],
+                phase="setup",
+                namespace=cs.peer_namespace,
+            )
+        )
+        setup_steps.append(
+            Step(
+                name="peer-build",
+                type="command",
+                config={
+                    "command": "exec",
+                    "probe": "none",
+                    "target": tc.builder_pod_name,
+                    "args": ["bash", "/src/build.sh"],
+                },
+                phase="setup",
+                namespace=cs.peer_namespace,
+            )
+        )
+
     try:
-        teardown_steps = compute_teardown_steps(tc, cs, jinja_env)
+        teardown_steps = compute_teardown_steps(
+            tc, cs, jinja_env, has_peer_steps=has_peer_steps
+        )
     except (ValueError, TypeError, TemplateError) as e:
         print(f"Error computing teardown steps: {e}")
         raise SystemExit(1)

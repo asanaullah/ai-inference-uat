@@ -110,9 +110,12 @@ class ComplianceConfig(BaseModel):
 
 
 class ClusterTestSpec(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     nodes: list[NodeSpec]
     namespace: str
+    peer_namespace: str = Field(alias="peerNamespace")
     storage: StorageConfig
+    peer_storage: StorageConfig | None = Field(default=None, alias="peerStorage")
     compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
 
 
@@ -188,6 +191,7 @@ class DAGStep(BaseModel):
     sidecars: list[SidecarContainer] = []
     resource_config: ResourceConfig | None = Field(None, alias="resourceConfig")
     service_account_name: str | None = Field(None, alias="serviceAccountName")
+    peer: bool = False
 
     @model_validator(mode="after")
     def _check_persist_sweep_exclusive(self) -> "DAGStep":
@@ -234,7 +238,17 @@ class TestSpec(BaseModel):
     server_config: dict[str, Any] = Field(default={}, alias="serverConfig")
 
 
+class TestMetadata(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    name: str = ""
+    supported_scopes: list[Literal["node", "cluster", "project"]] = Field(
+        default_factory=lambda: ["node", "cluster", "project"],
+        alias="supportedScopes",
+    )
+
+
 class Test(BaseModel):
+    metadata: TestMetadata = Field(default_factory=TestMetadata)
     spec: TestSpec
 
 
@@ -271,6 +285,7 @@ class Step:
     lifecycle: bool = False
     scope: str = ""
     phase: str = ""
+    namespace: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +298,7 @@ _VALID_PROBES = {"none", "wait-ready", "poll-completed"}
 
 def _validate_section(steps: list[dict[str, Any]], section: str) -> None:
     gen_names: set[str] = set()
-    pod_names: set[str] = set()
+    pod_names: set[tuple[str, str]] = set()
     for s in steps:
         name = s.get("name", "")
         stype = s.get("type", "")
@@ -297,9 +312,10 @@ def _validate_section(steps: list[dict[str, Any]], section: str) -> None:
         config = s.get("config", {})
         pod_name = config.get("pod_name")
         if pod_name:
-            if pod_name in pod_names:
+            key = (pod_name, s.get("namespace", ""))
+            if key in pod_names:
                 raise ValueError(f"Duplicate pod name '{pod_name}' in {section}")
-            pod_names.add(pod_name)
+            pod_names.add(key)
 
         if stype == "generate":
             gen_names.add(name)

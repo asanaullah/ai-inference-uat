@@ -67,9 +67,16 @@ spec:
 
 
   namespace: uat-project
+  peerNamespace: uat-peer
 
   storage:
     pvc: uat-project-storage
+    basePath: uat/results
+    models:
+      pvc: uat-models
+
+  peerStorage:
+    pvc: uat-peer-storage
     basePath: uat/results
     models:
       pvc: uat-models

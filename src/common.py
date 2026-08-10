@@ -261,9 +261,16 @@ def load_config(
 
     tests: list[LoadedTest] = []
     for i, entry in enumerate(suite.spec.tests, 1):
-        test_id = str(i)
+        test_id = f"t{i}"
         with open(lib_dir / f"{entry.name}.yaml") as f:
             test_def = Test(**yaml.safe_load(f))
+
+        supported = test_def.metadata.supported_scopes
+        if entry.scope not in supported:
+            raise ValueError(
+                f"test '{entry.name}' does not support scope '{entry.scope}' "
+                f"(supported: {supported})"
+            )
 
         spec = test_def.spec
         if entry.spec:
@@ -322,6 +329,7 @@ def add_teardown_steps(
     test: LoadedTest,
     scope: str,
     extra_resource_types: set[str] | None = None,
+    namespace: str = "",
 ) -> None:
     resource_types = _DEFAULT_RESOURCE_TYPES
     if extra_resource_types:
@@ -346,6 +354,7 @@ def add_teardown_steps(
                 lifecycle=True,
                 scope=scope,
                 phase="test",
+                namespace=namespace,
             )
         )
     steps.append(
@@ -367,6 +376,7 @@ def add_teardown_steps(
             lifecycle=True,
             scope=scope,
             phase="test",
+            namespace=namespace,
         )
     )
 
@@ -510,6 +520,7 @@ def add_resource_steps(
             on_failure=test.on_failure,
             scope=scope,
             phase="test",
+            namespace=namespace,
         )
     )
     steps.append(
@@ -528,6 +539,7 @@ def add_resource_steps(
             on_failure=test.on_failure,
             scope=scope,
             phase="test",
+            namespace=namespace,
         )
     )
 
@@ -662,6 +674,7 @@ def add_persistent_steps(
             on_failure=test.on_failure,
             scope=scope,
             phase="test",
+            namespace=namespace,
         )
     )
     steps.append(
@@ -682,6 +695,7 @@ def add_persistent_steps(
             on_failure=test.on_failure,
             scope=scope,
             phase="test",
+            namespace=namespace,
         )
     )
 
@@ -879,6 +893,7 @@ def add_ephemeral_steps(
                 on_failure=test.on_failure,
                 scope=scope,
                 phase="test",
+                namespace=namespace,
             )
         )
         steps.append(
@@ -899,6 +914,7 @@ def add_ephemeral_steps(
                 on_failure=test.on_failure,
                 scope=scope,
                 phase="test",
+                namespace=namespace,
             )
         )
         selector = f"test={test.name}{selector_extra},sweep={sweep_id}"
@@ -919,5 +935,6 @@ def add_ephemeral_steps(
                 lifecycle=True,
                 scope=scope,
                 phase="test",
+                namespace=namespace,
             )
         )

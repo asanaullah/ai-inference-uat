@@ -6,28 +6,13 @@ metadata:
   version: v0.0.1
 spec:
   tests:
+    # preflight
     - name: platform-check
       scope: project
       onFailure: continue
     - name: component
       scope: node
       onFailure: continue
-    - name: guidellm
-      scope: node
-      onFailure: abort
-      timeout: 1200
-    - name: inference-perf
-      scope: node
-      onFailure: abort
-      timeout: 1200
-    - name: llm-d-local
-      scope: node
-      onFailure: abort
-      timeout: 900
-    - name: chunked-prefill
-      scope: node
-      onFailure: abort
-      timeout: 900
     - name: iperf3
       scope: cluster
       onFailure: continue
@@ -36,3 +21,29 @@ spec:
         setSize: 2
         setSelection: all
         setCutoff: 0
+    - name: ping
+      scope: project
+      onFailure: continue
+    # operator
+    - name: kserve
+      scope: node
+      onFailure: continue
+      timeout: 900
+    # single-gpu-performance
+    - name: guidellm
+      scope: node
+      onFailure: abort
+      timeout: 1200
+    - name: inference-perf
+      scope: node
+      onFailure: abort
+      timeout: 1200
+    # multi-gpu-performance
+    - name: chunked-prefill
+      scope: node
+      onFailure: abort
+      timeout: 900
+    - name: llm-d-local
+      scope: node
+      onFailure: abort
+      timeout: 900

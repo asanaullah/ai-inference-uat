@@ -103,7 +103,8 @@ def _write_step(
         _make_executable(path)
         return True
 
-    script = _derive_manual_script(step, jinja_env, namespace)
+    effective_ns = step.namespace or namespace
+    script = _derive_manual_script(step, jinja_env, effective_ns)
     if script:
         filename = _step_filename(step)
         path = directory / f"{str(counter).zfill(pad_width)}-{filename}.sh"

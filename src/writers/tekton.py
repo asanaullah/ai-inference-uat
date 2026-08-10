@@ -288,7 +288,7 @@ def _extract_test_order(
         if step.test_id and step.test_id not in seen:
             seen.add(step.test_id)
             result.append((step.test_id, step.test, step.on_failure, step.scope))
-    result.sort(key=lambda x: int(x[0]))
+    result.sort(key=lambda x: int(x[0].lstrip("t")))
     return result
 
 
@@ -343,9 +343,10 @@ def _render_tekton_task(
     cmd = config["command"]
     probe = config.get("probe", "none")
 
+    effective_ns = step.namespace or cs.namespace
     base_ctx = {
         "task_name": task_name,
-        "namespace": cs.namespace,
+        "namespace": effective_ns,
         "managed_by_label": tc.managed_by_label,
         "ose_cli_image": tc.ose_cli_image,
     }

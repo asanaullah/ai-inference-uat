@@ -1,0 +1,91 @@
+# Assisted by Claude Opus 4.6
+apiVersion: uat.openshift.io/v1
+kind: Test
+metadata:
+  name: ping
+  version: v0.0.1
+  description: Cross-namespace service connectivity check
+  supportedScopes:
+    - node
+    - cluster
+    - project
+spec:
+  source:
+    ginkgo: ping.go
+
+  serverConfig:
+    projectNamespace: uat-project
+    peerNamespace: uat-peer
+
+  dag:
+    - name: project-server
+      image: registry.redhat.io/ubi9/ubi:9.8
+      command:
+        args:
+          - python3
+          - -m
+          - http.server
+          - "8080"
+      service:
+        enabled: true
+        port: 8080
+        name: project-server
+        headless: true
+      ports:
+        - containerPort: 8080
+      readinessProbe:
+        httpGet:
+          path: /
+          port: 8080
+        initialDelaySeconds: 2
+        periodSeconds: 5
+        failureThreshold: 6
+      persistsThroughSweep: true
+
+    - name: peer-server
+      image: registry.redhat.io/ubi9/ubi:9.8
+      peer: true
+      command:
+        args:
+          - python3
+          - -m
+          - http.server
+          - "8080"
+      service:
+        enabled: true
+        port: 8080
+        name: peer-server
+        headless: true
+      ports:
+        - containerPort: 8080
+      readinessProbe:
+        httpGet:
+          path: /
+          port: 8080
+        initialDelaySeconds: 2
+        periodSeconds: 5
+        failureThreshold: 6
+      persistsThroughSweep: true
+
+    - name: project-check
+      image: registry.redhat.io/ubi9/ubi:9.8
+      labelFilter: project-check
+      env:
+        - name: OWN_URL
+          value: '{{ services["project-server"].url }}'
+        - name: OTHER_SHORT_URL
+          value: '{{ services["peer-server"].url }}'
+        - name: OTHER_FQDN_URL
+          value: 'http://{{ services["peer-server"].name }}.{{ serverConfig.peerNamespace }}.svc.cluster.local:{{ services["peer-server"].port }}'
+
+    - name: peer-check
+      image: registry.redhat.io/ubi9/ubi:9.8
+      peer: true
+      labelFilter: peer-check
+      env:
+        - name: OWN_URL
+          value: '{{ services["peer-server"].url }}'
+        - name: OTHER_SHORT_URL
+          value: '{{ services["project-server"].url }}'
+        - name: OTHER_FQDN_URL
+          value: 'http://{{ services["project-server"].name }}.{{ serverConfig.projectNamespace }}.svc.cluster.local:{{ services["project-server"].port }}'

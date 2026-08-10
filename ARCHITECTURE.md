@@ -3,7 +3,7 @@
 
 ## Overview
 
-A declarative test harness that generates Kubernetes manifests from test definitions. Given a cluster configuration (target nodes, storage, namespace), the harness computes a flat, ordered list of steps, then independently derives both manually-executable manifests and Tekton pipeline manifests from that same step list. Tests are listed in execution order, each specifying a scope (**node**, **cluster**, or **project**) and a per-test failure policy.
+A declarative test harness that generates Kubernetes manifests from test definitions. Given a cluster configuration (target nodes, storage, namespace, and optional peer namespace for cross-namespace tests), the harness computes a flat, ordered list of steps, then independently derives both manually-executable manifests and Tekton pipeline manifests from that same step list. Tests are listed in execution order, each specifying a scope (**node**, **cluster**, or **project**) and a per-test failure policy. Each test definition declares which scopes it supports; scope mismatches are rejected at generation time.
 
 ```
                                                                      ┌→ Manual Manifests
@@ -13,13 +13,13 @@ Test Suite + Test Library + Cluster Config → python -m src → Steps ──┤
                                          steps.json (optional re-entry point)
 ```
 
-Each step carries its test's failure policy from `test_suite.yaml`, set during computation. After computation, the generator validates pod and service names and serializes the step list to `steps.json`. For cluster-scoped tests, `steps.json` metadata includes a `setMappings` section that records which nodes are in each set, keyed by `test_id`. The mapping is also derivable from the step list itself (each step's manifest contains the nodeSelector), but `setMappings` provides a convenient summary — especially useful for `random` selection where the chosen set is non-deterministic. This file can be fed back to the generator via `--steps` to regenerate manual and Tekton output without re-reading test definitions — useful for editing steps externally or re-running writers with different options. When loading from `steps.json`, the generator re-validates structure, pod and service names, and failure policy labels. The Tekton writer translates failure policies into `onError` values, `when` guards, and guard tasks (see [Failure Policies](#failure-policies)).
+Each step carries its test's failure policy from the test suite, set during computation. After computation, the generator validates pod and service names and serializes the step list to `steps.json`. For cluster-scoped tests, `steps.json` metadata includes a `setMappings` section that records which nodes are in each set, keyed by `test_id`. The mapping is also derivable from the step list itself (each step's manifest contains the nodeSelector), but `setMappings` provides a convenient summary — especially useful for `random` selection where the chosen set is non-deterministic. This file can be fed back to the generator via `--steps` to regenerate manual and Tekton output without re-reading test definitions — useful for editing steps externally or re-running writers with different options. When loading from `steps.json`, the generator re-validates structure, pod and service names, and failure policy labels. The Tekton writer translates failure policies into `onError` values, `when` guards, and guard tasks (see [Failure Policies](#failure-policies)).
 
 ## Input Format
 
-The generator takes three inputs: a **test suite** (`test_suite.yaml`) that defines which tests to run and in what order, a **test library** (a directory of `<test>.yaml` and `<test>.go` files) that contains the reusable test definitions, and a **cluster config** that provides the target nodes, storage, and namespace. Each node in the cluster config declares hardware characteristics under `componentValidation.sanity`. For any resource type that DAG steps request (e.g., `nvidia.com/gpu`, `memory`), the sanity section should include a field with the matching Kubernetes resource name and the node's schedulable capacity — these are used for resource validation during generation (see [Generation](#generation)). The suite/library separation allows multiple suites to reference the same library with different configurations. Adding a test to the suite requires three things:
+The generator takes three inputs: a **test suite** that defines which tests to run and in what order, a **test library** (a directory of `<test>.yaml` and `<test>.go` files) that contains the reusable test definitions, and a **cluster config** that provides the target nodes, storage, namespace, and optional peer namespace. Each node in the cluster config declares hardware characteristics under `componentValidation.sanity`. For any resource type that DAG steps request (e.g., `nvidia.com/gpu`, `memory`), the sanity section should include a field with the matching Kubernetes resource name and the node's schedulable capacity — these are used for resource validation during generation (see [Generation](#generation)). The suite/library separation allows multiple suites to reference the same library with different configurations. Adding a test to the suite requires three things:
 
-1. **An entry in `test_suite.yaml`** — the suite-level manifest that lists tests in execution order. Each entry specifies the test name, scope (`node`, `cluster`, or `project`), what to do on failure, and an optional per-test timeout. Test definitions in the test library are scope-agnostic — the same test can appear with different scopes across entries or suites. For cluster-scoped entries, a `placement` section controls how pods are distributed across nodes. Entries can also include a `spec` section that deep-merges over the test definition's `spec` from `<test>.yaml` — any field can be overridden, including serverConfig and individual DAG step fields (matched by step name). This allows the same test definition in the test library to be reused with different configurations across suites. Storage settings (PVC, base path, optional models storage) live in the cluster config. Default timeouts and tool images live in `config.yaml`.
+1. **An entry in the test suite** — the suite-level manifest that lists tests in execution order. Each entry specifies the test name, scope (`node`, `cluster`, or `project`), what to do on failure, and an optional per-test timeout. Each test definition declares which scopes it supports; the same test can appear with different (supported) scopes across entries or suites. For cluster-scoped entries, a `placement` section controls how pods are distributed across nodes. Entries can also include a `spec` section that deep-merges over the test definition's `spec` from `<test>.yaml` — any field can be overridden, including serverConfig and individual DAG step fields (matched by step name). This allows the same test definition in the test library to be reused with different configurations across suites. Storage settings (PVC, base path, optional models storage) live in the cluster config. Default timeouts and tool images live in `config.yaml`.
 
    ```yaml
    spec:
@@ -70,7 +70,8 @@ The generator takes three inputs: a **test suite** (`test_suite.yaml`) that defi
    The optional `spec` section deep-merges over the test definition's `spec`. For `dag` overrides, steps are referenced by name as dict keys (not a list) and only the specified fields are overridden — unmentioned fields retain their test.yaml defaults. For all other spec fields (`serverConfig`), the merge is recursive.
 
 2. **`<test>.yaml`** (in the test library) — the test definition containing:
-   - **DAG**: ordered resource graph (e.g. deploy a vLLM server, then run a test pod). DAG steps come in two flavors: **pod steps** and **resource steps**. Pod steps declare an image, command, env, ports, probes, resources, volume mounts, an optional service, and whether the pod persists through the parameter sweep or runs once per sweep iteration. `persistsThroughSweep` and `parameterSweep` are mutually exclusive — a persistent step cannot have its own sweep (it stays up while ephemeral sweep pods run against it). Pod steps may also specify a Ginkgo label filter (as an alternative to an explicit command), privileged mode, extra volumes, custom labels, a `serviceAccountName`, and sidecar containers (rendered as native Kubernetes sidecar init containers with `restartPolicy: Always`). Non-persistent pod steps may include a `parameterSweep` — a base command and a list of named entries, each with an `id`, `description`, and `flags` that are merged over the base command's flags. The generator produces a separate test pod for each sweep entry. **Resource steps** declare a `resourceConfig` (with `apiVersion`, `kind`, and `spec`) instead of an image, and deploy an arbitrary Kubernetes resource (e.g. an InferencePool or ConfigMap) as part of the DAG. Resource steps cannot set `persistsThroughSweep`, `parameterSweep`, or `sidecars`. Env vars support both plain `value` fields and Kubernetes `valueFrom` references (fieldRef, secretKeyRef).
+   - **Metadata**: declares which scopes the test supports (e.g. `[node, cluster]`). The generator rejects suite entries whose scope is not in this list. Defaults to all three scopes when omitted.
+   - **DAG**: ordered resource graph (e.g. deploy a vLLM server, then run a test pod). DAG steps come in two flavors: **pod steps** and **resource steps**. Pod steps declare an image, command, env, ports, probes, resources, volume mounts, an optional service, and whether the pod persists through the parameter sweep or runs once per sweep iteration. `persistsThroughSweep` and `parameterSweep` are mutually exclusive — a persistent step cannot have its own sweep (it stays up while ephemeral sweep pods run against it). Pod steps may also specify a Ginkgo label filter (as an alternative to an explicit command), privileged mode, extra volumes, custom labels, a `serviceAccountName`, and sidecar containers (rendered as native Kubernetes sidecar init containers with `restartPolicy: Always`). Non-persistent pod steps may include a `parameterSweep` — a base command and a list of named entries, each with an `id`, `description`, and `flags` that are merged over the base command's flags. The generator produces a separate test pod for each sweep entry. **Resource steps** declare a `resourceConfig` (with `apiVersion`, `kind`, and `spec`) instead of an image, and deploy an arbitrary Kubernetes resource (e.g. an InferencePool or ConfigMap) as part of the DAG. Resource steps cannot set `persistsThroughSweep`, `parameterSweep`, or `sidecars`. Env vars support both plain `value` fields and Kubernetes `valueFrom` references (fieldRef, secretKeyRef). Any DAG step (pod or resource) can set `peer: true` to deploy in the peer namespace instead of the primary namespace; see [Peer Namespace](#peer-namespace).
    - **Server config**: template variables substituted into DAG commands (model name, memory settings, etc.).
 
 3. **`<test>.go`** (in the test library) — a Ginkgo test file implementing the test logic. A single compiled binary handles all parameter sweep entries — each sweep entry runs as a separate pod with per-entry command flags and workspace directory.
@@ -85,7 +86,7 @@ The generator takes a test suite manifest (`--test-suite`), a test library direc
 
 3. **Tekton writer** — derives Tekton Tasks and Pipelines from the same steps. Pod manifests are embedded directly in Tekton Task scripts, so `build/tekton/` is self-contained.
 
-Every rendered manifest must be validated at generation time — invalid YAML, missing `apiVersion`, `kind`, or `metadata.name`/`metadata.generateName` must fail the generator immediately rather than producing broken manifests that only surface at `oc apply` time. Pod names are validated for RFC 1123 label compliance (lowercase alphanumeric, hyphens, etc.) and uniqueness after computation — a duplicate would cause resource collisions. Service names are validated for DNS-1035 compliance (must start with a lowercase letter, contain only lowercase alphanumeric characters and hyphens, and end with a lowercase alphanumeric character).
+Every rendered manifest must be validated at generation time — invalid YAML, missing `apiVersion`, `kind`, or `metadata.name`/`metadata.generateName` must fail the generator immediately rather than producing broken manifests that only surface at `oc apply` time. Pod names are validated for RFC 1123 label compliance (lowercase alphanumeric, hyphens, etc.) and uniqueness within each namespace after computation — a duplicate in the same namespace would cause resource collisions. Service names are validated for DNS-1035 compliance (must start with a lowercase letter, contain only lowercase alphanumeric characters and hyphens, and end with a lowercase alphanumeric character).
 
 For node-scoped and cluster-scoped tests, the generator validates resource demands before step computation. For each target node, it computes the peak concurrent resource demand — the sum of all persistent DAG step resource requests plus the maximum single ephemeral DAG step's resource requests — and checks that each Kubernetes resource type does not exceed the node's declared capacity in `componentValidation.sanity`. Resource values in DAG steps may be Jinja2 expressions (e.g., `{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}`); these are rendered before aggregation. Sanity dict keys use actual Kubernetes resource names (e.g. `nvidia.com/gpu`, `cpu`, `memory`) so they match resource requests directly. For cluster-scoped tests with `setSize > 1`, each DAG step targets a different node, so each node's demand is validated independently against its own capacity. The generator aborts with an error if any resource type exceeds capacity. Project-scoped tests skip resource validation since they have no specific target nodes — pods run wherever the scheduler places them.
 
@@ -93,7 +94,7 @@ Each step carries two names: a human-readable **step name** (used for manual scr
 
 ### Failure Policies
 
-Each test declares an `onFailure` policy in `test_suite.yaml`. The generator labels each step with its test's failure policy. Writers are responsible for translating these policies into backend-specific mechanisms.
+Each test declares an `onFailure` policy in the test suite. The generator labels each step with its test's failure policy. Writers are responsible for translating these policies into backend-specific mechanisms.
 
 - **`continue`** — continue executing remaining steps within this test before proceeding to the next test. A failing step does not affect other steps or other chains (nodes, sets).
 - **`skipTest`** — skip remaining steps within this test in the failing chain (tear down its resources), then proceed to the next test. Other chains running the same test are unaffected.
@@ -107,24 +108,24 @@ build/
 │   ├── manifests/
 │   │   ├── apply-configmap.yaml                         ← setup manifest
 │   │   ├── create-builder.yaml                          ← setup manifest
-│   │   ├── 1-component-wrk-4-test-runner.yaml           ← test manifest
-│   │   ├── 1-component-wrk-6-test-runner.yaml
-│   │   ├── 2-guidellm-wrk-4-vllm-server.yaml            ← persistent DAG manifest
-│   │   ├── 2-guidellm-wrk-6-vllm-server.yaml
-│   │   ├── 2-guidellm-wrk-4-pass-fail.yaml              ← sweep entry manifest
-│   │   ├── 2-guidellm-wrk-6-pass-fail.yaml
+│   │   ├── t1-component-wrk-4-test-runner.yaml          ← test manifest
+│   │   ├── t1-component-wrk-6-test-runner.yaml
+│   │   ├── t2-guidellm-wrk-4-vllm-server.yaml           ← persistent DAG manifest
+│   │   ├── t2-guidellm-wrk-6-vllm-server.yaml
+│   │   ├── t2-guidellm-wrk-4-pass-fail.yaml             ← sweep entry manifest
+│   │   ├── t2-guidellm-wrk-6-pass-fail.yaml
 │   │   ├── ...
 │   │   └── create-aggregator.yaml                       ← teardown manifest
 │   ├── 01-apply-configmap.sh                            ← apply script
 │   ├── 02-create-builder.sh                             ← apply script
 │   ├── 03-build.sh                                      ← exec script
-│   ├── 04-1-component-wrk-4-test-runner.sh              ← apply script (parallel nodes share counter)
-│   ├── 04-1-component-wrk-6-test-runner.sh
+│   ├── 04-t1-component-wrk-4-test-runner.sh             ← apply script (parallel nodes share counter)
+│   ├── 04-t1-component-wrk-6-test-runner.sh
 │   ├── ...
-│   ├── 07-2-guidellm-wrk-4-vllm-server.sh               ← apply script
-│   ├── 07-2-guidellm-wrk-6-vllm-server.sh
-│   ├── 08-2-guidellm-wrk-4-pass-fail.sh                 ← apply script
-│   ├── 08-2-guidellm-wrk-6-pass-fail.sh
+│   ├── 07-t2-guidellm-wrk-4-vllm-server.sh              ← apply script
+│   ├── 07-t2-guidellm-wrk-6-vllm-server.sh
+│   ├── 08-t2-guidellm-wrk-4-pass-fail.sh                ← apply script
+│   ├── 08-t2-guidellm-wrk-6-pass-fail.sh
 │   ├── ...
 │   ├── NN-create-aggregator.sh                          ← apply script
 │   ├── N-aggregate.sh                                   ← exec script
@@ -137,13 +138,13 @@ build/
 
 Manifests (`.yaml`) are written to `manual/manifests/` without a counter prefix — they are data files, not actions. Numbered shell scripts (`.sh`) are written to `manual/` and are what the operator runs in order: apply scripts reference the corresponding manifest (`oc apply -f manifests/<name>.yaml`), exec scripts run commands, and delete scripts clean up resources. Steps that run in parallel across nodes share the same counter. The counter is zero-padded to the width of the total step count so that shell glob ordering (`*.sh`) matches execution order. The numbered scripts are the single source of "what to do, in what order."
 
-`<test_id>` is the 1-indexed position of the test in the `test_suite.yaml` list (not zero-padded). The same test can appear multiple times in the list (e.g. with different configs or failure policies), so `<test_id>` prevents collisions in resource names and results paths, while `<test_name>` provides readability. For node-scoped tests, `<node>` is added to prevent collisions across parallel nodes. For cluster-scoped multi-set tests, `set<i>` prevents collisions across sequential sets. Project-scoped and cluster-scoped single-set tests have no node or set segment. Service names are prefixed with `svc-` for DNS-1035 compliance (services require names starting with a letter). Service URL references in env vars and commands are automatically rewritten to match.
+`<test_id>` is a `t`-prefixed 1-indexed position of the test in the test suite list (e.g. `t1`, `t2`). The same test can appear multiple times in the list (e.g. with different configs or failure policies), so `<test_id>` prevents collisions in resource names and results paths, while `<test_name>` provides readability. For node-scoped tests, `<node>` is added to prevent collisions across parallel nodes. For cluster-scoped multi-set tests, `set<i>` prevents collisions across sequential sets. Project-scoped and cluster-scoped single-set tests have no node or set segment. Service names are prefixed with `svc-` for DNS-1035 compliance (services require names starting with a letter). Service URL references in env vars and commands are automatically rewritten to match.
 
 ## Execution
 
 ### Tekton Writer
 
-The Tekton writer produces a single flat Tekton Pipeline. All tasks — setup, test, and teardown — are entries in one cluster pipeline. Node-scoped tests produce one task chain per node, running in parallel. Failure policies are implemented through `onError`, `when` expressions, and guard tasks. The cluster pipeline sequences tests in `test_suite.yaml` list order. Requires `scope-when-expressions-to-task: true` (default since Tekton Pipelines v0.54).
+The Tekton writer produces a single flat Tekton Pipeline. All tasks — setup, test, and teardown — are entries in one cluster pipeline. Node-scoped tests produce one task chain per node, running in parallel. Failure policies are implemented through `onError`, `when` expressions, and guard tasks. The cluster pipeline sequences tests in the test suite list order. Requires `scope-when-expressions-to-task: true` (default since Tekton Pipelines v0.54).
 
 #### Cluster Pipeline
 
@@ -152,11 +153,13 @@ apply-configmap → create-builder → build → [test task chains] → finally:
                                                                           (sequenced via runAfter)
 ```
 
+When a peer namespace is configured and any test uses `peer: true` DAG steps, the pipeline also includes peer infrastructure: `apply-peer-configmap → create-peer-builder → peer-build` in setup, and `create-peer-aggregator → peer-aggregate → peer-cleanup` in finally.
+
 **1. Apply ConfigMap** — creates a ConfigMap containing all Go source, cluster config, test suite config, build script, and aggregator script.
 
 **2. Create builder pod** — a long-lived Go toolchain pod with the PVC mounted at `/uat_workspace` and the ConfigMap mounted at `/src/`.
 
-**3. Build binaries** — copies source from ConfigMap mounts into the PVC, generates a `go.mod` with the Ginkgo version pinned in `config.yaml`, and compiles one Ginkgo binary per unique test name at `/uat_workspace/<test>/test.bin`. If the same test name appears multiple times in `test_suite.yaml` (e.g. with different failure policies), all instances share the same binary.
+**3. Build binaries** — copies source from ConfigMap mounts into the PVC, generates a `go.mod` with the Ginkgo version pinned in `config.yaml`, and compiles one Ginkgo binary per unique test name at `/uat_workspace/<test>/test.bin`. If the same test name appears multiple times in the test suite (e.g. with different failure policies), all instances share the same binary.
 
 **4. Tests** — each test's tasks are placed directly in the cluster pipeline as individual `taskRef` entries. Scope determines the shape:
 
@@ -187,7 +190,7 @@ apply-configmap → create-builder → build → [test task chains] → finally:
 - **Project** tests produce a single task chain directly in the cluster pipeline, without node affinity. Pods run without `nodeSelector`, validating project-wide concerns (quotas, RBAC, network policies). Step names follow the cluster/project convention: `<test_id>-<test>-<dag_step>`.
 
   ```
-  4-quota-runner → 4-quota-cleanup-runner → 4-quota-finally-teardown → guard-test-N → Next test
+  t4-quota-runner → t4-quota-cleanup-runner → t4-quota-finally-teardown → guard-test-N → Next test
   ```
 
 Every test, regardless of scope, ends with a guard task. The guard task fans in after all the test's `finally-teardown` tasks and serves as the single sync point between tests — the next test's first tasks `runAfter` the guard task. The guard task's `onError` is set according to the test's failure policy (see [Failure Policy Handling](#failure-policy-handling)).
@@ -282,6 +285,8 @@ Every chain follows the same lifecycle regardless of scope. DAG steps are proces
 
 Lifecycle steps — per-ephemeral cleanup, teardown, and finally-teardown — have no `when` guard and run unconditionally regardless of failure policy. Only test steps (resource deploys, persistent deploys, and ephemeral runs) receive `when` guards under `skipTest`/`abort`. Teardown is only added when the chain has persistent or resource steps; by the time it runs, per-ephemeral cleanup has already handled ephemeral resources. Finally-teardown is always present — both use the same broad selector, but finally-teardown catches anything missed by earlier steps or left behind when steps were skipped by failure policy. For cluster-scoped tests, this guarantees a clean slate between sets.
 
+When a chain contains `peer: true` DAG steps, teardown and finally-teardown are generated separately for each namespace. The primary-namespace teardown only deletes primary resources; a peer teardown (suffixed `-peer`) deletes resources in the peer namespace. This prevents cleanup selectors from crossing namespace boundaries.
+
 **Chain fan-in and test sequencing:**
 
 After all chains for a test complete, they fan in to a single **guard task**. The guard task is the sync point between tests — the next test's first steps `runAfter` the guard task. The guard task's `onError` enforces the test's failure policy (see [Failure Policy Handling](#failure-policy-handling)).
@@ -309,33 +314,33 @@ All scopes produce the same `Step` format. Placement is fully resolved during st
 
 ```
 node-scoped chain (one of N parallel chains):
-  2-guidellm-wrk-4-vllm-server                          [persistent deploy]
-    → 2-guidellm-wrk-4-pass-fail                         [ephemeral run]
-    → 2-guidellm-wrk-4-cleanup-pass-fail                 [per-ephemeral cleanup]
-    → 2-guidellm-wrk-4-sweep-short-burst                 [ephemeral run (sweep entry)]
-    → 2-guidellm-wrk-4-cleanup-sweep-short-burst         [per-ephemeral cleanup]
-    → 2-guidellm-wrk-4-sweep-sustained-load              [ephemeral run (sweep entry)]
-    → 2-guidellm-wrk-4-cleanup-sweep-sustained-load      [per-ephemeral cleanup]
-    → 2-guidellm-wrk-4-teardown                          [teardown]
-    → 2-guidellm-wrk-4-finally-teardown                  [finally-teardown, no when guard]
+  t2-guidellm-wrk-4-vllm-server                         [persistent deploy]
+    → t2-guidellm-wrk-4-pass-fail                        [ephemeral run]
+    → t2-guidellm-wrk-4-cleanup-pass-fail                [per-ephemeral cleanup]
+    → t2-guidellm-wrk-4-sweep-short-burst                [ephemeral run (sweep entry)]
+    → t2-guidellm-wrk-4-cleanup-sweep-short-burst        [per-ephemeral cleanup]
+    → t2-guidellm-wrk-4-sweep-sustained-load             [ephemeral run (sweep entry)]
+    → t2-guidellm-wrk-4-cleanup-sweep-sustained-load     [per-ephemeral cleanup]
+    → t2-guidellm-wrk-4-teardown                         [teardown]
+    → t2-guidellm-wrk-4-finally-teardown                 [finally-teardown, no when guard]
 
 cluster-scoped chains (setSize: 2, setSelection: all — sequential):
-  set0: 3-network-set0-iperf-server                       [persistent deploy]
-    → 3-network-set0-iperf-client                         [ephemeral run]
-    → 3-network-set0-cleanup-iperf-client                 [per-ephemeral cleanup]
-    → 3-network-set0-teardown                             [teardown]
-    → 3-network-set0-finally-teardown                     [finally-teardown]
-  → set1: 3-network-set1-iperf-server
-    → 3-network-set1-iperf-client
-    → 3-network-set1-cleanup-iperf-client
-    → 3-network-set1-teardown
-    → 3-network-set1-finally-teardown
+  set0: t3-network-set0-iperf-server                      [persistent deploy]
+    → t3-network-set0-iperf-client                        [ephemeral run]
+    → t3-network-set0-cleanup-iperf-client                [per-ephemeral cleanup]
+    → t3-network-set0-teardown                            [teardown]
+    → t3-network-set0-finally-teardown                    [finally-teardown]
+  → set1: t3-network-set1-iperf-server
+    → t3-network-set1-iperf-client
+    → t3-network-set1-cleanup-iperf-client
+    → t3-network-set1-teardown
+    → t3-network-set1-finally-teardown
   → ...
 
 project-scoped chain (single, no nodeSelector):
-  4-quota-check-runner                                    [ephemeral run]
-    → 4-quota-cleanup-check-runner                        [per-ephemeral cleanup]
-    → 4-quota-finally-teardown                            [finally-teardown]
+  t4-quota-check-runner                                   [ephemeral run]
+    → t4-quota-cleanup-check-runner                       [per-ephemeral cleanup]
+    → t4-quota-finally-teardown                           [finally-teardown]
 ```
 
 ## Results
@@ -347,30 +352,30 @@ Each test run writes JUnit XML and benchmark output to the PVC in a flat directo
 ├── binaries/
 │   ├── component/test.bin
 │   └── guidellm/test.bin
-├── 1-component-wrk-4-test-runner/
+├── t1-component-wrk-4-test-runner/
 │   └── junit.xml
-├── 1-component-wrk-6-test-runner/
+├── t1-component-wrk-6-test-runner/
 │   └── junit.xml
-├── 2-guidellm-wrk-4-vllm-server/             # persistent DAG pod workspace
-├── 2-guidellm-wrk-4-pass-fail/
+├── t2-guidellm-wrk-4-vllm-server/            # persistent DAG pod workspace
+├── t2-guidellm-wrk-4-pass-fail/
 │   └── junit.xml
-├── 2-guidellm-wrk-4-sweep-short-burst/
+├── t2-guidellm-wrk-4-sweep-short-burst/
 │   ├── junit.xml
 │   └── results.json
-├── 2-guidellm-wrk-4-sweep-sustained-load/
+├── t2-guidellm-wrk-4-sweep-sustained-load/
 │   └── junit.xml
-├── 2-guidellm-wrk-6-vllm-server/
-├── 2-guidellm-wrk-6-pass-fail/
-│   └── junit.xml
-├── ...
-├── 3-network-set0-iperf-server/                # cluster-scoped, set 0
-├── 3-network-set0-iperf-client/
-│   └── junit.xml
-├── 3-network-set1-iperf-server/                # cluster-scoped, set 1
-├── 3-network-set1-iperf-client/
+├── t2-guidellm-wrk-6-vllm-server/
+├── t2-guidellm-wrk-6-pass-fail/
 │   └── junit.xml
 ├── ...
-├── 4-quota-check-runner/                       # project-scoped (no node segment)
+├── t3-network-set0-iperf-server/               # cluster-scoped, set 0
+├── t3-network-set0-iperf-client/
+│   └── junit.xml
+├── t3-network-set1-iperf-server/               # cluster-scoped, set 1
+├── t3-network-set1-iperf-client/
+│   └── junit.xml
+├── ...
+├── t4-quota-check-runner/                      # project-scoped (no node segment)
 │   └── junit.xml
 └── report/
     └── summary.json
@@ -387,7 +392,7 @@ The aggregator pod runs `scripts/aggregate.py` (deployed via the ConfigMap) agai
   "status": "passed",
   "totals": {"tests": 42, "failures": 0, "errors": 0, "skipped": 2},
   "entries": [
-    {"name": "1-component-wrk-4-test-runner", "tests": 12, "failures": 0, "errors": 0, "skipped": 0, "status": "passed"},
+    {"name": "t1-component-wrk-4-test-runner", "tests": 12, "failures": 0, "errors": 0, "skipped": 0, "status": "passed"},
     ...
   ]
 }
@@ -395,16 +400,25 @@ The aggregator pod runs `scripts/aggregate.py` (deployed via the ConfigMap) agai
 
 The top-level `status` is `"failed"` if any entry has failures or errors, `"passed"` otherwise. The summary is also printed to stdout for operator visibility.
 
+## Peer Namespace
+
+Some tests validate cross-namespace behavior (e.g. DNS isolation, network policy enforcement). To support this, the cluster config can declare a `peerNamespace` and optional `peerStorage`. Any DAG step with `peer: true` deploys to the peer namespace instead of the primary namespace, using the peer storage config for its PVC, base path, and models volume.
+
+The peer namespace gets its own independent infrastructure: a separate ConfigMap, builder pod, and aggregator pod, each targeting the peer namespace's PVC. This keeps the two namespaces fully isolated at the Kubernetes level while the test DAG orchestrates across both. Teardown is also split: each namespace gets its own teardown and finally-teardown steps so that cleanup selectors do not cross namespace boundaries.
+
+Pod name uniqueness is scoped per namespace: two pods with the same name in different namespaces do not collide. Each step carries a target namespace; writers use it to render namespace-specific commands and tasks.
+
 ## Design Decisions
 
 | Decision | Rationale |
 |---|---|
 | Steps-first generation | The generator computes a flat, ordered step list from test definitions, then both the manual writer and the Tekton writer independently derive their output from that same list. This ensures both paths always produce equivalent resources, and makes it straightforward to add writers for other orchestration harnesses without changing step computation. |
-| Three test scopes, one list | **Node** tests validate per-node hardware (GPUs, drivers). **Cluster** tests validate multi-node coordination (RDMA, interconnect) with configurable placement at the suite level. **Project** tests validate namespace-level concerns (quotas, RBAC) without node affinity. Test definitions are scope-agnostic — the same test can appear with different scopes across suites. All three scopes are declared in a single ordered list in `test_suite.yaml`, allowing interleaved execution — each test is its own pipeline entry in the cluster pipeline, so scopes can alternate freely. |
+| Three test scopes, one list | **Node** tests validate per-node hardware (GPUs, drivers). **Cluster** tests validate multi-node coordination (RDMA, interconnect) with configurable placement at the suite level. **Project** tests validate namespace-level concerns (quotas, RBAC) without node affinity. Each test definition declares which scopes it supports; the same test can appear with different (supported) scopes across suites. All three scopes are declared in a single ordered list in the test suite, allowing interleaved execution: each test is its own pipeline entry in the cluster pipeline, so scopes can alternate freely. |
 | Unified step naming | DAG steps follow a single naming convention: `<test_id>-<test>-<node>-<dag_step>` (node-scoped), `<test_id>-<test>-set<i>-<dag_step>` (cluster-scoped, multiple sets), or `<test_id>-<test>-<dag_step>` (cluster-scoped single set, or project-scoped), with `-<id>` appended for sweep entries. Each step carries a human-readable **step name** (used for filenames and PVC paths) and a **resource name** (used for Kubernetes `metadata.name` on pods, services, and Tekton tasks). For node-scoped tests, the resource name uses a sanitized node name where invalid characters are replaced with dashes and names over 16 characters are truncated to 12 + a 4-character hash. When the node name is short and RFC 1123 compliant, both names are identical. Cluster-scoped and project-scoped step names use only generator-controlled segments, so both names are always identical. Lifecycle steps extend the convention with a fixed suffix: `<prefix>-cleanup-<dag_step>[-<id>]` (per-ephemeral-step cleanup), `<prefix>-teardown` (persistent resource teardown), and `<prefix>-finally-teardown` (always-run safety net). `<test_id>` prevents collisions when the same test appears multiple times in the suite; `<node>` prevents collisions across parallel nodes; `set<i>` prevents collisions across node sets. Service names are prefixed with `svc-` for DNS-1035 compliance. Service URL references are rewritten automatically. |
 | Placement is step computation, not writer logic | All scopes resolve placement during step computation — nodeSelectors and labels are baked into the rendered manifest content. The resulting step list uses the same `Step` format across all scopes. Writers use step metadata (scope, chain keys) to determine execution ordering. |
 | One binary per test, not per parameter | Same test logic, different runtime config. Avoids redundant compilation. |
 | ConfigMap → Builder Pod → PVC | A single ConfigMap delivers all Go source to the builder pod. Builder pod provides a persistent compilation environment. PVC makes binaries accessible to any test container. Delivery mechanism is swappable (GitHub pull, custom image) without changing the rest of the pipeline. |
+| Peer namespace with independent infrastructure | Cross-namespace tests need resources in two namespaces, but Kubernetes RBAC, ConfigMaps, and PVCs are namespace-scoped. Rather than granting cross-namespace access, the peer namespace gets its own ConfigMap, builder pod, and aggregator pod. This keeps the two namespaces fully isolated at the Kubernetes level. The test DAG orchestrates across both by tagging individual DAG steps with `peer: true`. Pod name uniqueness is scoped per namespace so that mirrored step names (e.g. a server in each namespace) do not collide. |
 | Separate models storage | Model weights live on a dedicated volume (`storage.models`) rather than the results PVC. This keeps large model files (tens of GB) out of the per-run results directory, allows a single pre-populated cache to be shared across runs, and lets inference servers load weights from `/models` without downloading at runtime. The models volume is mounted read-only on all DAG pods when configured. The `ModelsStorageConfig` is its own model so the backing store can be extended beyond PVC (e.g. object storage) without changing `StorageConfig`. |
 | DAG resources persist through sweep | Expensive resources (GPU-backed servers) deploy once; the parameter sweep reuses them. |
 | Resource steps for non-pod K8s objects | DAG steps with `resourceConfig` deploy arbitrary Kubernetes resources (InferencePools, ConfigMaps, etc.) as part of the test DAG. They are treated as persistent for teardown purposes — each resource type (e.g. `InferencePool`) is added to the teardown resource type list so cleanup catches them. This avoids coupling the harness to a fixed set of Kubernetes resource types. |
@@ -417,7 +431,7 @@ The top-level `status` is `"failed"` if any entry has failures or errors, `"pass
 ## Constraints
 
 - **ConfigMap 1MB limit**: all Go source, cluster config, test suite config, build script, and aggregator script are packed into a single ConfigMap. A project with many tests may exceed Kubernetes' 1MB ConfigMap limit.
-- **Resource name length**: resource names are constructed by concatenating test_id, test name, node or set segment, and DAG step (e.g. `2-guidellm-wrk-4-vllm-server`, `3-network-set0-iperf-server`). Node names are capped at 16 characters (12 + 4-char hash if longer), but the full resource name can still exceed the 63-character Kubernetes name limit with long test or DAG step names.
+- **Resource name length**: resource names are constructed by concatenating test_id, test name, node or set segment, and DAG step (e.g. `t2-guidellm-wrk-4-vllm-server`, `t3-network-set0-iperf-server`). Node names are capped at 16 characters (12 + 4-char hash if longer), but the full resource name can still exceed the 63-character Kubernetes name limit with long test or DAG step names.
 - **One cluster pipeline per namespace**: the builder pod has a fixed name, so only one cluster pipeline can run at a time in a given namespace. This is typically sufficient — the task chains are the element that scales with cluster size, and a single cluster pipeline fans out to all target nodes in parallel.
-- **Sequential sweeps**: parameter sweep entries within a test run as separate pods in sequence. Failure behavior is controlled per-test via the `onFailure` field in `test_suite.yaml` (`continue`, `skipTest`, or `abort`). All three policies produce a guard task between tests. `continue` uses no `when` guards, so all tasks run through failures. `skipTest` adds `when` guards that skip remaining test tasks in the chain after a failure. Both use `onError: continue` on the guard task, so the next test always proceeds. `abort` uses the same `when` guards as `skipTest`, but the guard task uses `onError: stopAndFail` — halting the pipeline if any chain had a failure. In manual mode, scripts are independent and the operator controls whether to proceed.
+- **Sequential sweeps**: parameter sweep entries within a test run as separate pods in sequence. Failure behavior is controlled per-test via the `onFailure` field in the test suite (`continue`, `skipTest`, or `abort`). All three policies produce a guard task between tests. `continue` uses no `when` guards, so all tasks run through failures. `skipTest` adds `when` guards that skip remaining test tasks in the chain after a failure. Both use `onError: continue` on the guard task, so the next test always proceeds. `abort` uses the same `when` guards as `skipTest`, but the guard task uses `onError: stopAndFail` — halting the pipeline if any chain had a failure. In manual mode, scripts are independent and the operator controls whether to proceed.
 - **Combinatorial growth for cluster tests**: `setSelection: all` generates P(n, k) sets for permutations or C(n, k) for combinations, where n is the number of cluster nodes and k is `setSize`. Each set runs as a complete DAG cycle. For large clusters with `setType: permutation` and high `setSize`, the number of sets grows factorially — e.g. 10 nodes with `setSize: 3` produces 720 permutations. Use `setSelection: random` or `setType: combination` (which produces 120 for the same parameters) to bound the run count.

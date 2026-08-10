@@ -5,6 +5,9 @@ metadata:
   name: component
   version: v0.0.1
   description: Validate node hardware and software against cluster specification
+  supportedScopes:
+    - node
+    - cluster
 spec:
   source:
     ginkgo: component.go

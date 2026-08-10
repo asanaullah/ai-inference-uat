@@ -5,6 +5,10 @@ metadata:
   name: guidellm
   version: v0.0.1
   description: vLLM inference server validation with guidellm benchmarking
+  supportedScopes:
+    - node
+    - cluster
+    - project
 spec:
   source:
     ginkgo: guidellm.go

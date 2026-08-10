@@ -5,6 +5,10 @@ metadata:
   name: platform-check
   version: v0.0.1
   description: Validate platform configuration, RBAC permissions, and required API groups
+  supportedScopes:
+    - node
+    - cluster
+    - project
 spec:
   source:
     ginkgo: platform-check.go

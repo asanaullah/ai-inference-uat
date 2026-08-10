@@ -22,7 +22,7 @@ def _test(
     dag=None,
     on_failure="continue",
     timeout=None,
-    test_id="1",
+    test_id="t1",
 ):
     dag = dag or [{"name": "run", "image": "img", "labelFilter": "pass-fail"}]
     spec = TestSpec(
@@ -52,9 +52,9 @@ class TestComputeProjectSteps:
     def test_simple_test(self, env, tc):
         steps = compute_project_steps(_test(), tc, "ns", "pvc", "results", env)
         names = [s.name for s in steps]
-        assert "1-t-run" in names
-        assert "1-t-cleanup-run" in names
-        assert "1-t-finally-teardown" in names
+        assert "t1-t-run" in names
+        assert "t1-t-cleanup-run" in names
+        assert "t1-t-finally-teardown" in names
 
     def test_no_node_in_names(self, env, tc):
         steps = compute_project_steps(_test(), tc, "ns", "pvc", "results", env)
@@ -92,8 +92,8 @@ class TestComputeProjectSteps:
         ]
         steps = compute_project_steps(_test(dag=dag), tc, "ns", "pvc", "results", env)
         names = [s.name for s in steps]
-        assert "1-t-teardown" in names
-        assert "1-t-finally-teardown" in names
+        assert "t1-t-teardown" in names
+        assert "t1-t-finally-teardown" in names
 
     def test_timeout_override(self, env, tc):
         steps = compute_project_steps(
@@ -121,11 +121,11 @@ class TestComputeProjectSteps:
         ]
         steps = compute_project_steps(_test(dag=dag), tc, "ns", "pvc", "results", env)
         gen_names = [s.name for s in steps if s.type == "generate"]
-        assert "1-t-bench-e1" in gen_names
-        assert "1-t-bench-e2" in gen_names
+        assert "t1-t-bench-e1" in gen_names
+        assert "t1-t-bench-e2" in gen_names
 
     def test_finally_step_flag(self, env, tc):
         steps = compute_project_steps(_test(), tc, "ns", "pvc", "results", env)
         finally_steps = [s for s in steps if s.finally_step]
         assert len(finally_steps) == 1
-        assert finally_steps[0].name == "1-t-finally-teardown"
+        assert finally_steps[0].name == "t1-t-finally-teardown"

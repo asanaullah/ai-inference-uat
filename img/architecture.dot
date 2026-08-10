@@ -24,8 +24,9 @@ digraph architecture {
                 <FONT COLOR="white" POINT-SIZE="13"><B>Test Suite</B></FONT>
             </TD></TR>
             <TR><TD ALIGN="LEFT" COLSPAN="2">
-                <FONT POINT-SIZE="11"><B>test_suite.yaml</B></FONT><BR ALIGN="LEFT"/>
-                <FONT POINT-SIZE="10" COLOR="#555">ordered list: name, scope, onFailure</FONT>
+                <FONT POINT-SIZE="11"><B>Test suite YAML</B></FONT><BR ALIGN="LEFT"/>
+                <FONT POINT-SIZE="10" COLOR="#555">ordered list: name, scope, onFailure,</FONT><BR ALIGN="LEFT"/>
+                <FONT POINT-SIZE="10" COLOR="#555">timeout, placement, spec override</FONT>
             </TD></TR>
             <TR><TD ALIGN="LEFT" COLSPAN="2">
                 <FONT POINT-SIZE="11"><B>&lt;test&gt;.yaml</B> + <B>&lt;test&gt;.go</B></FONT><BR ALIGN="LEFT"/>
@@ -42,7 +43,7 @@ digraph architecture {
             </TD></TR>
             <TR><TD ALIGN="LEFT">
                 <FONT POINT-SIZE="11"><B>ocp-test.yaml</B></FONT><BR ALIGN="LEFT"/>
-                <FONT POINT-SIZE="10" COLOR="#555">target nodes, namespace,<BR ALIGN="LEFT"/>storage, GPU specs</FONT>
+                <FONT POINT-SIZE="10" COLOR="#555">target nodes, namespace,<BR ALIGN="LEFT"/>peer namespace, storage, GPU specs</FONT>
             </TD></TR>
         </TABLE>
     >]
@@ -154,6 +155,13 @@ digraph architecture {
                 </TABLE>>
                 fillcolor="#ffe8b8" color="#cc8a00"]
 
+            peer_setup [label=<
+                <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6">
+                    <TR><TD><FONT POINT-SIZE="11">Peer Setup</FONT></TD></TR>
+                    <TR><TD><FONT POINT-SIZE="9" COLOR="#555">ConfigMap + builder + build<BR/>in peer namespace</FONT></TD></TR>
+                </TABLE>>
+                fillcolor="#fff5dd" color="#cc8a00" style="rounded,filled,dashed"]
+
             test_execution [shape=plaintext margin=0 label=<
                 <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="4" CELLPADDING="10"
                        BGCOLOR="#e8eef8" COLOR="#354999" STYLE="ROUNDED">
@@ -161,7 +169,7 @@ digraph architecture {
                         <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4">
                             <TR><TD><FONT COLOR="white" POINT-SIZE="14"><B>4</B></FONT></TD>
                                 <TD><FONT COLOR="white" POINT-SIZE="12"><B>  Test Task Chains</B></FONT></TD>
-                                <TD><FONT COLOR="#9aa1cc" POINT-SIZE="10">  in test_suite.yaml list order</FONT></TD></TR>
+                                <TD><FONT COLOR="#9aa1cc" POINT-SIZE="10">  in test suite list order</FONT></TD></TR>
                         </TABLE>
                     </TD></TR>
                     <TR>
@@ -178,7 +186,7 @@ digraph architecture {
                         <TD BGCOLOR="#dde4f0" VALIGN="TOP">
                             <FONT POINT-SIZE="11"><B>scope: project</B></FONT><BR/>
                             <FONT POINT-SIZE="10" COLOR="#555">no node affinity,<BR/>namespace-level</FONT><BR/><BR/>
-                            <FONT FACE="Courier" POINT-SIZE="9">quota/RBAC checks<BR/>→ network policies<BR/>→ collect results</FONT>
+                            <FONT FACE="Courier" POINT-SIZE="9">RBAC/connectivity<BR/>→ cross-namespace<BR/>→ collect results</FONT>
                         </TD>
                     </TR>
                     <TR><TD COLSPAN="3">
@@ -216,15 +224,24 @@ digraph architecture {
                             <TD><FONT POINT-SIZE="11">  Cleanup</FONT></TD></TR>
                     </TABLE>>
                     fillcolor="#ffe8b8" color="#cc8a00"]
+
+                peer_finally [label=<
+                    <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6">
+                        <TR><TD><FONT POINT-SIZE="11">Peer Finally</FONT></TD></TR>
+                        <TR><TD><FONT POINT-SIZE="9" COLOR="#555">aggregator + aggregate + cleanup<BR/>in peer namespace</FONT></TD></TR>
+                    </TABLE>>
+                    fillcolor="#fff5dd" color="#cc8a00" style="rounded,filled,dashed"]
             }
 
             // edges within cluster pipeline
             apply_configmap -> create_builder
             create_builder -> build_binaries
-            build_binaries -> test_execution
+            build_binaries -> peer_setup [style=dashed]
+            peer_setup -> test_execution [style=dashed]
             test_execution -> create_aggregator [style=dashed]
             create_aggregator -> aggregate
             aggregate -> cleanup_step
+            cleanup_step -> peer_finally [style=dashed]
         }
     }
 

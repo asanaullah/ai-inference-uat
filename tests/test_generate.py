@@ -31,6 +31,7 @@ TC_DATA = {
 CS_DATA = {
     "nodes": [{"name": "n", "componentValidation": {"sanity": {"nvidia.com/gpu": 1}}}],
     "namespace": "ns",
+    "peerNamespace": "ns-peer",
     "storage": {"pvc": "pvc", "basePath": "results"},
 }
 
@@ -55,7 +56,7 @@ def _test(name="t"):
         source={"ginkgo": "t.go"},
         dag=[{"name": "run", "image": "img", "labelFilter": "pass-fail"}],
     )
-    return LoadedTest(name=name, spec=spec, go_source="src", test_id="1")
+    return LoadedTest(name=name, spec=spec, go_source="src", test_id="t1")
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -280,7 +281,7 @@ class TestValidateUniquePodNames:
     def test_valid_names_pass(self):
         steps = [
             Step(name="a", type="command", config={"pod_name": "my-pod"}),
-            Step(name="b", type="command", config={"pod_name": "1-component-wrk-4"}),
+            Step(name="b", type="command", config={"pod_name": "t1-component-wrk-4"}),
         ]
         _validate_unique_pod_names(steps)
 
