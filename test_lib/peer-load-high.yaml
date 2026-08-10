@@ -1,0 +1,178 @@
+apiVersion: uat.openshift.io/v1
+kind: Test
+metadata:
+  name: peer-load-high
+  version: v0.0.1
+  description: Multi-tenant contention test measuring inference performance under cross-namespace GPU load
+  supportedScopes:
+    - node
+spec:
+  source:
+    ginkgo: peer-load-high.go
+
+  dag:
+    - name: peer-server
+      peer: true
+      image: nvcr.io/nvidia/vllm:26.03-py3
+      service:
+        enabled: true
+        port: 8000
+        name: peer-server
+        headless: true
+      command:
+        args:
+          - python
+          - -m
+          - vllm.entrypoints.openai.api_server
+        flags:
+          model: /models/ibm-granite/granite-3.3-8b-instruct
+          port: 8000
+          tensor-parallel-size: '{% set g = nodeSpec.componentValidation.sanity["nvidia.com/gpu"] %}{{ g // 2 }}'
+          enable-chunked-prefill: ~
+      env:
+        - name: HOME
+          value: /tmp
+      ports:
+        - containerPort: 8000
+          name: http
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8000
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 30
+      resources:
+        requests:
+          nvidia.com/gpu: '{% set g = nodeSpec.componentValidation.sanity["nvidia.com/gpu"] %}{{ g // 2 }}'
+        limits:
+          nvidia.com/gpu: '{% set g = nodeSpec.componentValidation.sanity["nvidia.com/gpu"] %}{{ g // 2 }}'
+      persistsThroughSweep: true
+      parameterSweep: null
+
+    - name: project-server
+      image: nvcr.io/nvidia/vllm:26.03-py3
+      service:
+        enabled: true
+        port: 8000
+        name: project-server
+        headless: true
+      command:
+        args:
+          - python
+          - -m
+          - vllm.entrypoints.openai.api_server
+        flags:
+          model: /models/ibm-granite/granite-3.3-8b-instruct
+          port: 8000
+          tensor-parallel-size: '{% set g = nodeSpec.componentValidation.sanity["nvidia.com/gpu"] %}{{ g - (g // 2) }}'
+          enable-chunked-prefill: ~
+      env:
+        - name: HOME
+          value: /tmp
+      ports:
+        - containerPort: 8000
+          name: http
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8000
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 30
+      resources:
+        requests:
+          nvidia.com/gpu: '{% set g = nodeSpec.componentValidation.sanity["nvidia.com/gpu"] %}{{ g - (g // 2) }}'
+        limits:
+          nvidia.com/gpu: '{% set g = nodeSpec.componentValidation.sanity["nvidia.com/gpu"] %}{{ g - (g // 2) }}'
+      persistsThroughSweep: true
+      parameterSweep: null
+
+    - name: peer-load
+      peer: true
+      image: quay.io/inference-perf/inference-perf:v0.6.1
+      env:
+        - name: HOME
+          value: /tmp
+      command:
+        args:
+          - inference-perf
+        flags:
+          server.type: vllm
+          server.base_url: '{{ services["peer-server"].url }}'
+          server.model_name: /models/ibm-granite/granite-3.3-8b-instruct
+          server.ignore_eos: 'true'
+          api.type: completion
+          api.streaming: 'true'
+          data.type: random
+          data.input_distribution.min: 64
+          data.input_distribution.max: 256
+          data.input_distribution.mean: 128
+          data.input_distribution.std_dev: 32
+          data.output_distribution.min: 32
+          data.output_distribution.max: 128
+          data.output_distribution.mean: 64
+          data.output_distribution.std_dev: 16
+          load.type: constant
+          load.num_workers: 4
+          load.stages: '[{"rate": 10, "duration": 600}]'
+          storage.local_storage.path: /uat_workspace
+          report.request_lifecycle.summary: 'true'
+          report.request_lifecycle.per_request: 'false'
+      persistsThroughSweep: true
+      parameterSweep: null
+
+    - name: sweep
+      image: quay.io/inference-perf/inference-perf:v0.6.1
+      labelFilter: quantitative
+      env:
+        - name: HOME
+          value: /tmp
+        - name: SERVER_URL
+          value: '{{ services["project-server"].url }}'
+        - name: SWEEP_COMMAND
+          value: '{{ paramSweep.command | toJson }}'
+      persistsThroughSweep: false
+      parameterSweep:
+        baseCommand:
+          args:
+            - inference-perf
+          flags:
+            server.type: vllm
+            server.base_url: '{{ services["project-server"].url }}'
+            server.model_name: /models/ibm-granite/granite-3.3-8b-instruct
+            server.ignore_eos: 'true'
+            api.type: completion
+            api.streaming: 'true'
+            data.type: random
+            data.input_distribution.min: 64
+            data.input_distribution.max: 256
+            data.input_distribution.mean: 128
+            data.input_distribution.std_dev: 32
+            data.output_distribution.min: 32
+            data.output_distribution.max: 128
+            data.output_distribution.mean: 64
+            data.output_distribution.std_dev: 16
+            load.type: constant
+            load.num_workers: 4
+            storage.local_storage.path: /uat_workspace
+            report.request_lifecycle.summary: 'true'
+            report.request_lifecycle.per_request: 'false'
+        entries:
+          - id: constant-low
+            description: Low-rate baseline under contention
+            flags:
+              load.stages: '[{"rate": 1, "duration": 30}]'
+
+          - id: constant-high
+            description: High sustained load under contention
+            flags:
+              load.stages: '[{"rate": 10, "duration": 60}]'
+
+          - id: poisson-burst
+            description: Poisson arrival under contention
+            flags:
+              load.type: poisson
+              load.stages: '[{"rate": 5, "duration": 60}]'

@@ -12,36 +12,44 @@ Platform prerequisites. Checks that must pass before GPU workloads run.
 | [platform-check](#1-platform-check) | RBAC permissions and API group availability |
 | [component](#2-component) | Node hardware and software validation |
 | [iperf3](#3-iperf3) | Inter-node TCP bandwidth |
-| [ping](#4-ping) | Cross-namespace service connectivity |
 
 ### Operator
 Model serving through cluster operators and CRDs.
 
 | Test | Description |
 |------|-------------|
-| [kserve](#6-kserve) | KServe InferenceService deployment and inference validation |
+| [kserve](#5-kserve) | KServe InferenceService deployment and inference validation |
 
 ### Single-GPU Performance
 Inference benchmarks on a single GPU.
 
 | Test | Description |
 |------|-------------|
-| [guidellm](#7-guidellm) | vLLM + guidellm benchmark sweeps |
-| [inference-perf](#8-inference-perf) | vLLM + inference-perf benchmark sweeps |
+| [guidellm](#6-guidellm) | vLLM + guidellm benchmark sweeps |
+| [inference-perf](#7-inference-perf) | vLLM + inference-perf benchmark sweeps |
 
 ### Multi-GPU Performance
 Workloads that stress GPU-to-GPU communication fabrics.
 
 | Test | Description |
 |------|-------------|
-| [chunked-prefill](#9-chunked-prefill) | NCCL over NVLink, tensor-parallel inference |
-| [llm-d-local](#10-llm-d-local) | NIXL over NVLink, disaggregated prefill/decode |
+| [chunked-prefill](#8-chunked-prefill) | NCCL over NVLink, tensor-parallel inference |
+| [llm-d-local](#9-llm-d-local) | NIXL over NVLink, disaggregated prefill/decode |
 
 ### Interactive Environments
 
 | Test | Description |
 |------|-------------|
-| [dev-env](#5-dev-env) | Jupyter notebook server with CUDA validation |
+| [dev-env](#4-dev-env) | Jupyter notebook server with CUDA validation |
+
+### Multi-Tenancy
+Namespace isolation and cross-tenant performance impact. Isolation tests verify that network boundaries between namespaces are enforced. Contention tests deploy competing GPU workloads in a peer namespace and measure the performance impact on the project namespace under different load intensities.
+
+| Test | Description |
+|------|-------------|
+| [ping](#10-ping) | Cross-namespace service connectivity |
+| [peer-load-high](#11-peer-load-high) | Inference performance under high cross-namespace GPU load |
+| [peer-load-low](#12-peer-load-low) | Inference performance under low cross-namespace GPU load |
 
 ## Tests
 
@@ -209,59 +217,7 @@ The test uses `permutation` placement rather than `combination` because A->B and
 
 ---
 
-## 4. ping
-
-### Purpose
-
-This test validates cross-namespace service connectivity by deploying simple HTTP servers in both the project and peer namespaces, then running connectivity checks from each side. A pod in the project namespace should be able to reach its own service but not the peer service by short name (namespace isolation). A pod in the peer namespace should be able to reach both its local peer service and the project service via cross-namespace FQDN.
-
-### Architecture
-
-```
-project-server [persistent, project namespace]
-    |
-peer-server [persistent, peer namespace]
-    |
-    +--- project-check [pass-fail, ephemeral, project namespace]
-    |        own service by short name ✓
-    |        peer service by short name ✗
-    |        peer service by FQDN ✗
-    |
-    +--- peer-check [pass-fail, ephemeral, peer namespace]
-             own service by short name ✓
-             project service by short name ✗
-             project service by FQDN ✗
-```
-
-### Infrastructure
-
-| Name | Image | GPUs | Service | Key config |
-|------|-------|------|---------|------------|
-| project-server | `registry.redhat.io/ubi9/ubi:latest` | none | headless ClusterIP :8080 | `python3 -m http.server 8080` |
-| peer-server | `registry.redhat.io/ubi9/ubi:latest` | none | headless ClusterIP :8080 (peer namespace) | `python3 -m http.server 8080` |
-| project-check | `registry.redhat.io/ubi9/ubi:latest` | none | none | `OWN_URL`, `OTHER_SHORT_URL`, `OTHER_FQDN_URL` env |
-| peer-check | `registry.redhat.io/ubi9/ubi:latest` | none | none (peer namespace) | `OWN_URL`, `OTHER_SHORT_URL`, `OTHER_FQDN_URL` env |
-
-### Pass-fail assertions
-
-Both project-check and peer-check run the same three assertions with symmetric env vars:
-
-1. HTTP GET to own service by short name returns 200 (service reachable in own namespace)
-2. HTTP GET to other service by short name fails (DNS does not resolve across namespaces)
-3. HTTP GET to other service by FQDN fails (network policy blocks cross-namespace traffic)
-
-### Prerequisites
-
-The peer namespace must be configured in the cluster spec (`peerNamespace`). Both namespaces must have the RBAC permissions to create pods and services. The `serverConfig.projectNamespace` and `serverConfig.peerNamespace` must match the cluster spec.
-
-### Design rationale
-
-The test uses Python's built-in `http.server` module rather than nginx because it runs as non-root without any configuration, which works with OpenShift's default security context. Both checks run identical assertions with symmetric env vars: own service reachable, other service unreachable by short name (DNS scoping), other service unreachable by FQDN (network policy). This validates both DNS namespace isolation and network-level cross-namespace blocking.
-
-
----
-
-## 5. dev-env
+## 4. dev-env
 
 ### Purpose
 
@@ -306,7 +262,7 @@ The validator uses a minimal websocket client built from Go's standard library t
 
 ---
 
-## 6. kserve
+## 5. kserve
 
 ### Purpose
 
@@ -348,7 +304,7 @@ The test uses the `containers` predictor (inline container spec) rather than a s
 
 ---
 
-## 7. guidellm
+## 6. guidellm
 
 ### Purpose
 
@@ -403,7 +359,7 @@ At least one GPU must be available for the server pod to schedule. The models PV
 
 ---
 
-## 8. inference-perf
+## 7. inference-perf
 
 ### Purpose
 
@@ -458,7 +414,7 @@ At least one GPU must be available for the server pod to schedule. The models PV
 
 ---
 
-## 9. chunked-prefill
+## 8. chunked-prefill
 
 ### Purpose
 
@@ -508,7 +464,7 @@ Chunked prefill allows vLLM to interleave prefill and decode batches, which impr
 
 ---
 
-## 10. llm-d-local
+## 9. llm-d-local
 
 ### Purpose
 
@@ -572,3 +528,153 @@ Block size is computed from GPU memory using the formula `((mem + 2560) // 5120)
 The stress test is specifically structured to minimize KV cache fragmentation, which is the main obstacle to achieving high transfer bandwidth. There are two sources of fragmentation. First, concurrent requests cause vLLM's block allocator to interleave block IDs across requests, which defeats NIXL descriptor merging and drops per-transfer bandwidth significantly. The stress test uses `worker_max_concurrency=1` to serialize requests and avoid this. Second, prefix caching causes fragmentation because when vLLM retains KV cache blocks for shared prefixes, new requests reuse those cached prefix blocks but allocate fresh blocks for the unique suffix in scattered free slots between cached entries. The stress test uses `num_groups=500, num_prompts_per_group=1` so that each request has a unique prefix and never gets a cache hit, keeping block allocation contiguous.
 
 `UCX_RNDV_PIPELINE_SHM_ENABLE=no` disables the default behavior of staging GPU-to-GPU transfers through host shared memory, forcing direct cuda_ipc transfers over NVLink. NIXL side-channel ports must differ between prefill (5557) and decode (5558) since both bind to the pod IP.
+
+
+---
+
+## 10. ping
+
+### Purpose
+
+This test validates cross-namespace service connectivity by deploying simple HTTP servers in both the project and peer namespaces, then running connectivity checks from each side. A pod in the project namespace should be able to reach its own service but not the peer service by short name (namespace isolation). A pod in the peer namespace should be able to reach both its local peer service and the project service via cross-namespace FQDN.
+
+### Architecture
+
+```
+project-server [persistent, project namespace]
+    |
+peer-server [persistent, peer namespace]
+    |
+    +--- project-check [pass-fail, ephemeral, project namespace]
+    |        own service by short name ✓
+    |        peer service by short name ✗
+    |        peer service by FQDN ✗
+    |
+    +--- peer-check [pass-fail, ephemeral, peer namespace]
+             own service by short name ✓
+             project service by short name ✗
+             project service by FQDN ✗
+```
+
+### Infrastructure
+
+| Name | Image | GPUs | Service | Key config |
+|------|-------|------|---------|------------|
+| project-server | `registry.redhat.io/ubi9/ubi:latest` | none | headless ClusterIP :8080 | `python3 -m http.server 8080` |
+| peer-server | `registry.redhat.io/ubi9/ubi:latest` | none | headless ClusterIP :8080 (peer namespace) | `python3 -m http.server 8080` |
+| project-check | `registry.redhat.io/ubi9/ubi:latest` | none | none | `OWN_URL`, `OTHER_SHORT_URL`, `OTHER_FQDN_URL` env |
+| peer-check | `registry.redhat.io/ubi9/ubi:latest` | none | none (peer namespace) | `OWN_URL`, `OTHER_SHORT_URL`, `OTHER_FQDN_URL` env |
+
+### Pass-fail assertions
+
+Both project-check and peer-check run the same three assertions with symmetric env vars:
+
+1. HTTP GET to own service by short name returns 200 (service reachable in own namespace)
+2. HTTP GET to other service by short name fails (DNS does not resolve across namespaces)
+3. HTTP GET to other service by FQDN fails (network policy blocks cross-namespace traffic)
+
+### Prerequisites
+
+The peer namespace must be configured in the cluster spec (`peerNamespace`). Both namespaces must have the RBAC permissions to create pods and services. The `serverConfig.projectNamespace` and `serverConfig.peerNamespace` must match the cluster spec.
+
+### Design rationale
+
+The test uses Python's built-in `http.server` module rather than nginx because it runs as non-root without any configuration, which works with OpenShift's default security context. Both checks run identical assertions with symmetric env vars: own service reachable, other service unreachable by short name (DNS scoping), other service unreachable by FQDN (network policy). This validates both DNS namespace isolation and network-level cross-namespace blocking.
+
+
+---
+
+## 11. peer-load-high
+
+### Purpose
+
+This test measures inference performance under high cross-namespace GPU contention. It deploys tensor-parallel vLLM servers with chunked prefill in both the project and peer namespaces on the same node, splitting the node's GPUs evenly between them (peer gets g/2, project gets g - g/2). It starts a sustained high-rate load generator (10 req/s for 10 minutes) against the peer server, then runs benchmark sweeps against the project server. This noisy-neighbor pattern reveals how inference latency and throughput degrade when a co-located multi-GPU workload is under heavy load.
+
+### Architecture
+
+```
+peer-server [persistent, peer namespace]
+    |
+    +--- peer-load [persistent, peer namespace, 10 req/s × 600s]
+
+project-server [persistent, project namespace]
+    |
+    +--- sweep [ephemeral, one pod per entry]
+             constant-low
+             constant-high
+             poisson-burst
+```
+
+Both servers are pinned to the same node via nodeSelector (node scope only). The peer-load pod starts before the sweep and runs continuously throughout.
+
+### Infrastructure
+
+| Name | Image | GPUs | Service | Key config |
+|------|-------|------|---------|------------|
+| peer-server | `nvcr.io/nvidia/vllm:26.03-py3` | g/2 | headless ClusterIP :8000 (peer namespace) | `--tensor-parallel-size=<g/2> --enable-chunked-prefill` |
+| project-server | `nvcr.io/nvidia/vllm:26.03-py3` | g - g/2 | headless ClusterIP :8000 | `--tensor-parallel-size=<g - g/2> --enable-chunked-prefill` |
+| peer-load | `quay.io/inference-perf/inference-perf:v0.6.1` | none | none (peer namespace) | constant 10 req/s, 600s duration, 4 workers |
+| sweep | `quay.io/inference-perf/inference-perf:v0.6.1` | none | none | `SERVER_URL`, `SWEEP_COMMAND` env |
+
+### Sweep entries
+
+| ID | Load type | Rate | Duration | Workers | Data |
+|----|-----------|------|----------|---------|------|
+| constant-low | constant | 1 req/s | 30s | 4 | random (input: 64-256, mean=128; output: 32-128, mean=64) |
+| constant-high | constant | 10 req/s | 60s | 4 | same |
+| poisson-burst | poisson | 5 req/s | 60s | 4 | same |
+
+Results are quantitative only (no pass-fail assertions). Throughput (total and output tokens/s), request latency, TTFT, and TPOT are reported via Ginkgo `AddReportEntry`.
+
+### Prerequisites
+
+All GPUs on the target node must be available since peer-server takes g/2 and project-server takes the remaining g - g/2. The peer namespace must be configured in the cluster spec. The models PVC must be mounted at `/models` in both namespaces.
+
+### Design rationale
+
+The peer-load pod has no readinessProbe so it becomes Ready immediately after starting, which ensures the background load is running before the sweep pods launch. The 10 req/s rate with 4 workers creates sustained GPU pressure on the peer server without saturating it to the point of request failures. Node scope is required so both servers land on the same physical node, creating real GPU contention through shared PCIe bandwidth, NVLink fabric, memory controller, and power delivery. The GPU split uses `g // 2` for peer and `g - (g // 2)` for project, which on an odd GPU count gives the project server the extra GPU. Tensor parallelism with chunked prefill is enabled on both servers so each uses all its allocated GPUs in a single TP group, matching production-like multi-GPU serving configurations. Comparing these results against the chunked-prefill baseline (test 8) quantifies the performance impact of noisy-neighbor GPU workloads.
+
+
+---
+
+## 12. peer-load-low
+
+### Purpose
+
+This test is identical to peer-load-high but with a low-rate background load (1 req/s instead of 10 req/s) on the peer server. It provides a low-contention data point that, when compared against peer-load-high and the chunked-prefill baseline, reveals the relationship between neighbor load intensity and inference performance degradation.
+
+### Architecture
+
+```
+peer-server [persistent, peer namespace]
+    |
+    +--- peer-load [persistent, peer namespace, 1 req/s × 600s]
+
+project-server [persistent, project namespace]
+    |
+    +--- sweep [ephemeral, one pod per entry]
+             constant-low
+             constant-high
+             poisson-burst
+```
+
+### Infrastructure
+
+| Name | Image | GPUs | Service | Key config |
+|------|-------|------|---------|------------|
+| peer-server | `nvcr.io/nvidia/vllm:26.03-py3` | g/2 | headless ClusterIP :8000 (peer namespace) | `--tensor-parallel-size=<g/2> --enable-chunked-prefill` |
+| project-server | `nvcr.io/nvidia/vllm:26.03-py3` | g - g/2 | headless ClusterIP :8000 | `--tensor-parallel-size=<g - g/2> --enable-chunked-prefill` |
+| peer-load | `quay.io/inference-perf/inference-perf:v0.6.1` | none | none (peer namespace) | constant 1 req/s, 600s duration, 4 workers |
+| sweep | `quay.io/inference-perf/inference-perf:v0.6.1` | none | none | `SERVER_URL`, `SWEEP_COMMAND` env |
+
+### Sweep entries
+
+Same as peer-load-high. See [peer-load-high sweep entries](#11-peer-load-high).
+
+### Prerequisites
+
+Same as peer-load-high. See [peer-load-high prerequisites](#11-peer-load-high).
+
+### Design rationale
+
+At 1 req/s the peer server processes requests with minimal queuing, so the GPUs are mostly idle between requests. Any performance degradation observed in the project-side sweep at this load level points to fixed overhead from co-tenancy (shared NVLink fabric, memory controller, PCIe bus arbitration, GPU context switching) rather than sustained compute contention. This makes peer-load-low the control for peer-load-high's experiment.

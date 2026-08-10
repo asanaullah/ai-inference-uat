@@ -21,9 +21,6 @@ spec:
         setSize: 2
         setSelection: all
         setCutoff: 0
-    - name: ping
-      scope: project
-      onFailure: continue
     - name: dev-env
       scope: node
       onFailure: continue
@@ -51,3 +48,15 @@ spec:
       scope: node
       onFailure: abort
       timeout: 900
+    # multi-tenancy
+    - name: ping
+      scope: project
+      onFailure: continue
+    - name: peer-load-high
+      scope: node
+      onFailure: continue
+      timeout: 1800
+    - name: peer-load-low
+      scope: node
+      onFailure: continue
+      timeout: 1800
