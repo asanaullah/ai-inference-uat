@@ -1,0 +1,62 @@
+# Assisted by Claude Opus 4.6
+apiVersion: uat.openshift.io/v1
+kind: Test
+metadata:
+  name: dev-env
+  version: v0.0.1
+  description: GPU development environment with Jupyter notebook server and CUDA validation
+  supportedScopes:
+    - node
+    - cluster
+spec:
+  source:
+    ginkgo: dev-env.go
+
+  dag:
+    - name: notebook-server
+      image: quay.io/jschless/ml-dev-env:latest
+      command:
+        args:
+          - jupyter
+          - lab
+          - --notebook-dir=/uat_workspace
+          - --ip=0.0.0.0
+          - --port=8888
+          - --no-browser
+          - --IdentityProvider.token=
+          - --ServerApp.disable_check_xsrf=True
+      env:
+        - name: HOME
+          value: /tmp
+      service:
+        enabled: true
+        port: 8888
+        name: notebook-server
+        headless: true
+      ports:
+        - containerPort: 8888
+      readinessProbe:
+        httpGet:
+          path: /api/status
+          port: 8888
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 30
+      resources:
+        requests:
+          nvidia.com/gpu: '{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}'
+        limits:
+          nvidia.com/gpu: '{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}'
+      persistsThroughSweep: true
+
+    - name: validator
+      image: registry.redhat.io/ubi9/ubi:9.8
+      labelFilter: pass-fail
+      env:
+        - name: SERVER_URL
+          value: '{{ services["notebook-server"]["url"] }}'
+        - name: EXPECTED_GPU_COUNT
+          value: '{{ nodeSpec.componentValidation.sanity["nvidia.com/gpu"] }}'
+        - name: EXPECTED_NVLINK
+          value: '{{ nodeSpec.componentValidation.sanity.nvlink }}'

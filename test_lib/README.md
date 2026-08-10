@@ -19,31 +19,30 @@ Model serving through cluster operators and CRDs.
 
 | Test | Description |
 |------|-------------|
-| [kserve](#5-kserve) | KServe InferenceService deployment and inference validation |
+| [kserve](#6-kserve) | KServe InferenceService deployment and inference validation |
 
 ### Single-GPU Performance
 Inference benchmarks on a single GPU.
 
 | Test | Description |
 |------|-------------|
-| [guidellm](#6-guidellm) | vLLM + guidellm benchmark sweeps |
-| [inference-perf](#7-inference-perf) | vLLM + inference-perf benchmark sweeps |
+| [guidellm](#7-guidellm) | vLLM + guidellm benchmark sweeps |
+| [inference-perf](#8-inference-perf) | vLLM + inference-perf benchmark sweeps |
 
 ### Multi-GPU Performance
 Workloads that stress GPU-to-GPU communication fabrics.
 
 | Test | Description |
 |------|-------------|
-| [chunked-prefill](#8-chunked-prefill) | NCCL over NVLink, tensor-parallel inference |
-| [llm-d-local](#9-llm-d-local) | NIXL over NVLink, disaggregated prefill/decode |
+| [chunked-prefill](#9-chunked-prefill) | NCCL over NVLink, tensor-parallel inference |
+| [llm-d-local](#10-llm-d-local) | NIXL over NVLink, disaggregated prefill/decode |
 
-### Interface
-User-facing interfaces for chat and notebook workflows.
+### Interactive Environments
 
 | Test | Description |
 |------|-------------|
+| [dev-env](#5-dev-env) | Jupyter notebook server with CUDA validation |
 | chat | Chat UI backed by a vLLM inference server *(planned)* |
-| notebook | Jupyter notebook with GPUs as a dev environment *(planned)* |
 
 ## Tests
 
@@ -263,7 +262,52 @@ The test uses Python's built-in `http.server` module rather than nginx because i
 
 ---
 
-## 5. kserve
+## 5. dev-env
+
+### Purpose
+
+This test deploys a Jupyter notebook server with all node GPUs and validates that the development environment is functional end-to-end. Rather than running diagnostics at startup, the validator pod creates a notebook on the server via the Jupyter Contents API, starts a kernel, executes CUDA diagnostic code through the Jupyter kernel websocket protocol, and then reads back the results. This proves the full interactive workflow works: notebook creation, kernel execution with GPU access, and file I/O through the Jupyter API.
+
+### Architecture
+
+```
+notebook-server [persistent]
+    |
+    +--- validator [pass-fail, ephemeral]
+             creates notebook via Contents API
+             starts kernel, executes CUDA diagnostics via websocket
+             reads result.txt via Contents API
+             validates GPU count and NVLink against cluster spec
+```
+
+### Infrastructure
+
+| Name | Image | GPUs | Service | Key config |
+|------|-------|------|---------|------------|
+| notebook-server | `quay.io/jschless/ml-dev-env:latest` | All node GPUs | headless ClusterIP :8888 | `jupyter lab --notebook-dir=/uat_workspace`, no auth, XSRF disabled, `HOME=/tmp` |
+| validator | `registry.redhat.io/ubi9/ubi:9.8` | none | none | `SERVER_URL`, `EXPECTED_GPU_COUNT`, `EXPECTED_NVLINK` env |
+
+### Pass-fail assertions
+
+1. Notebook created on server via Jupyter Contents API (`PUT /api/contents/gpu-diagnostics.ipynb`)
+2. Kernel started and diagnostic code executed via websocket (`/api/kernels/<id>/channels`)
+3. `result.txt` readable via Contents API (`GET /api/contents/result.txt`)
+4. GPU count from CUDA matches cluster spec (`nvidia.com/gpu`)
+5. NVLink width from `nvidia-smi topo -m` matches cluster spec (`nvlink`)
+6. All GPU devices reported by CUDA (device list length matches expected count)
+
+### Prerequisites
+
+The `quay.io/jschless/ml-dev-env:latest` image must be accessible from the cluster. At least one GPU must be available for the notebook server to schedule. The cluster spec must include `nvlink` in the node's `componentValidation.sanity` section.
+
+### Design rationale
+
+The validator uses a minimal websocket client built from Go's standard library to avoid adding external dependencies. The notebook server runs with `HOME=/tmp` because the image's root filesystem is not writable under OpenShift's arbitrary UID assignment. XSRF protection is disabled (`--ServerApp.disable_check_xsrf=True`) because the validator pod communicates with the Jupyter API programmatically without browser cookies. Authentication is disabled (`--IdentityProvider.token=`) since the server is only accessible within the cluster network via a headless ClusterIP service. The diagnostic code writes `result.txt` to `/uat_workspace` (the PVC mount) using an absolute path because the kernel's working directory defaults to the user's home, not the notebook directory.
+
+
+---
+
+## 6. kserve
 
 ### Purpose
 
@@ -305,7 +349,7 @@ The test uses the `containers` predictor (inline container spec) rather than a s
 
 ---
 
-## 6. guidellm
+## 7. guidellm
 
 ### Purpose
 
@@ -360,7 +404,7 @@ At least one GPU must be available for the server pod to schedule. The models PV
 
 ---
 
-## 7. inference-perf
+## 8. inference-perf
 
 ### Purpose
 
@@ -415,7 +459,7 @@ At least one GPU must be available for the server pod to schedule. The models PV
 
 ---
 
-## 8. chunked-prefill
+## 9. chunked-prefill
 
 ### Purpose
 
@@ -465,7 +509,7 @@ Chunked prefill allows vLLM to interleave prefill and decode batches, which impr
 
 ---
 
-## 9. llm-d-local
+## 10. llm-d-local
 
 ### Purpose
 

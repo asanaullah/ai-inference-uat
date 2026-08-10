@@ -24,6 +24,10 @@ spec:
     - name: ping
       scope: project
       onFailure: continue
+    - name: dev-env
+      scope: node
+      onFailure: continue
+      timeout: 600
     # operator
     - name: kserve
       scope: node
