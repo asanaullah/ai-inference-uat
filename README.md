@@ -398,6 +398,15 @@ The generated output compiles `my-test.go` into a binary on the builder pod and 
 
 ## Test Definition Reference
 
+### Metadata
+
+Each test definition has a `metadata` section that declares properties used by the generator at load time:
+
+| Field | Description |
+|---|---|
+| `name` | Human-readable test name (informational only) |
+| `supportedScopes` | List of scopes this test supports (`node`, `cluster`, `project`). Defaults to all three when omitted. The generator rejects any suite entry whose `scope` is not in this list. |
+
 ### DAG Steps
 
 Each test defines an ordered DAG of resources to deploy and run. DAG steps come in two flavors: **pod steps** and **resource steps**. Pod steps are either **persistent** (stay up for all sweep entries) or **ephemeral** (run once per sweep entry and exit). Ephemeral pods are cleaned up immediately after completion to release resources (e.g. GPUs) for subsequent steps. Each ephemeral pod carries a `sweep` label matching its sweep entry ID, enabling targeted deletion without affecting persistent pods. Persistent pods are torn down after all DAG steps complete. **Resource steps** deploy arbitrary Kubernetes resources (e.g. InferencePools, ConfigMaps) as part of the DAG — they declare a `resourceConfig` instead of an image.
