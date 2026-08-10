@@ -30,7 +30,7 @@ spec:
       timeout: 600
     # operator
     - name: kserve
-      scope: node
+      scope: project
       onFailure: continue
       timeout: 900
     # single-gpu-performance

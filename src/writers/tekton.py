@@ -157,16 +157,6 @@ def write_tekton(
         )
         guard_task_names[test_id] = guard_name
 
-    teardown_task_names = _write_tekton_tasks(
-        teardown_steps,
-        gen_lookup,
-        tc,
-        cs,
-        jinja_env,
-        tekton_dir,
-        timestamp_var=ts,
-    )
-
     # Build cluster pipeline — all entries are flat
     cluster_tasks: list[dict] = []
     prev: str | None = None
@@ -218,23 +208,47 @@ def write_tekton(
 
     cluster_tasks.extend(test_task_entries)
 
-    # Cluster finally (teardown)
-    cluster_finally: list[dict] = []
-    prev_finally: str | None = None
-    for task_name in teardown_task_names:
-        step = _find_step(teardown_steps, task_name, "command")
-        if not step:
+    # Cluster finally (teardown) — Tekton finally tasks cannot use runAfter,
+    # so each namespace's teardown steps are combined into a single Task
+    # whose steps execute sequentially.
+    ns_groups: dict[str, list[Step]] = {}
+    for step in teardown_steps:
+        if step.type != "command":
             continue
-        res = step.resource_name or step.name
+        ns = step.namespace or cs.namespace
+        ns_groups.setdefault(ns, []).append(step)
+
+    cluster_finally: list[dict] = []
+    for ns, ns_steps in ns_groups.items():
+        composite_name = (
+            "finally-teardown" if ns == cs.namespace else f"finally-teardown-{ns}"
+        )
+        script_steps = []
+        for step in ns_steps:
+            script = _build_teardown_script(step, gen_lookup, tc, cs, ts)
+            step_name = step.resource_name or step.name
+            script_steps.append({"name": step_name, "script": script})
+
+        task_content = render_manifest(
+            jinja_env,
+            "task-finally-sequence.yaml.j2",
+            {
+                "task_name": composite_name,
+                "namespace": ns,
+                "managed_by_label": tc.managed_by_label,
+                "ose_cli_image": tc.ose_cli_image,
+                "steps": script_steps,
+            },
+        )
+        (tekton_dir / f"task-{composite_name}.yaml").write_text(task_content)
+
         cluster_finally.append(
             {
-                "name": res,
-                "ref_name": res,
-                "run_after": [prev_finally] if prev_finally else [],
+                "name": composite_name,
+                "ref_name": composite_name,
                 "on_error": "continue",
             }
         )
-        prev_finally = res
 
     cluster_pipeline = render_manifest(
         jinja_env,
@@ -277,6 +291,61 @@ def _find_step(steps: list[Step], name: str, step_type: str) -> Step | None:
         if (s.name == name or s.resource_name == name) and s.type == step_type:
             return s
     return None
+
+
+def _build_teardown_script(
+    step: Step,
+    gen_lookup: dict[str, str],
+    tc: ToolConfig,
+    cs: ClusterTestSpec,
+    timestamp_var: str,
+) -> str:
+    config = step.config
+    cmd = config["command"]
+    ns = step.namespace or cs.namespace
+
+    if cmd == "apply":
+        manifest = _resolve_manifest(step, gen_lookup)
+        manifest = manifest.replace("__TIMESTAMP__", timestamp_var)
+        probe = config.get("probe", "none")
+        lines = [
+            f"oc apply -n {ns} -f - <<'MANIFEST_EOF'",
+            manifest,
+            "MANIFEST_EOF",
+        ]
+        if probe == "wait-ready":
+            pod_name = config.get("pod_name", "")
+            timeout = config.get("timeout", tc.deploy_timeout)
+            lines.append(f'echo "Waiting for {pod_name} to be ready..."')
+            lines.append(
+                f"oc wait --for=condition=Ready pod/{pod_name}"
+                f" --timeout={timeout}s -n {ns}"
+            )
+        return "\n".join(lines)
+
+    if cmd == "exec":
+        target = config["target"]
+        args = [
+            a.replace("__TIMESTAMP__", timestamp_var) for a in config.get("args", [])
+        ]
+        return f"oc exec {target} -n {ns} -- {' '.join(args)}"
+
+    if cmd == "delete-all":
+        configmap = config.get("configmap_name", tc.configmap_name)
+        label = tc.managed_by_label
+        sel = f"app.kubernetes.io/managed-by={label}"
+        return "\n".join(
+            [
+                'echo "Cleaning up all UAT resources..."',
+                f"oc delete pods -l {sel} --ignore-not-found -n {ns}",
+                f"oc delete services -l {sel} --ignore-not-found -n {ns}",
+                f"oc delete deployments -l {sel} --ignore-not-found -n {ns}",
+                f"oc delete configmap {configmap} --ignore-not-found -n {ns}",
+                'echo "Cleanup complete"',
+            ]
+        )
+
+    raise ValueError(f"Unknown teardown command: {cmd}")
 
 
 def _extract_test_order(

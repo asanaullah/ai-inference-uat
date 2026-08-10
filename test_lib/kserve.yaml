@@ -6,8 +6,6 @@ metadata:
   version: v0.0.1
   description: KServe InferenceService deployment and inference validation
   supportedScopes:
-    - node
-    - cluster
     - project
 spec:
   source:

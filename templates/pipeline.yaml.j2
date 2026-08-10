@@ -51,12 +51,6 @@ spec:
       params:
         - name: timestamp
           value: $(context.pipelineRun.name)
-{% if task.run_after is defined and task.run_after %}
-      runAfter:
-{% for dep in task.run_after %}
-        - {{ dep }}
-{% endfor %}
-{% endif %}
 {% if task.on_error is defined and task.on_error %}
       onError: {{ task.on_error }}
 {% endif %}

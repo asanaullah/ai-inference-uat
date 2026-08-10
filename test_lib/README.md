@@ -42,7 +42,6 @@ Workloads that stress GPU-to-GPU communication fabrics.
 | Test | Description |
 |------|-------------|
 | [dev-env](#5-dev-env) | Jupyter notebook server with CUDA validation |
-| chat | Chat UI backed by a vLLM inference server *(planned)* |
 
 ## Tests
 
@@ -344,7 +343,7 @@ The KServe operator must be installed and the `serving.kserve.io` API group must
 
 ### Design rationale
 
-The test uses the `containers` predictor (inline container spec) rather than a separate ServingRuntime so the entire test is self-contained in a single CRD. The cluster defaults to RawDeployment mode, so no deployment mode annotation is needed. GPU count and models PVC are in `serverConfig` rather than `nodeSpec` so the test is scope-agnostic. The 10-minute polling timeout accounts for image pull time and model loading on first run.
+The test uses the `containers` predictor (inline container spec) rather than a separate ServingRuntime so the entire test is self-contained in a single CRD. The cluster defaults to RawDeployment mode, so no deployment mode annotation is needed. The test is restricted to project scope because the InferenceService CRD is a non-Pod resource whose spec is passed through as-is by the framework's generic `resource.yaml.j2` template. That template cannot inject a `nodeSelector` since the path differs by resource kind (`spec.predictor.nodeSelector` for InferenceService vs `spec.template.spec.nodeSelector` for Deployment, etc.). At node scope, two "per-node" InferenceServices could land on the same node, defeating the purpose. Node-scope support requires a `nodeSelectorPath` mechanism in the framework's resource step handling. The 10-minute polling timeout accounts for image pull time and model loading on first run.
 
 
 ---

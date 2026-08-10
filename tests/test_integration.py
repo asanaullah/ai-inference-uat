@@ -123,6 +123,28 @@ class TestTektonOutput:
         guard_files = [f for f in tekton.iterdir() if f.name.startswith("task-guard-")]
         assert len(guard_files) > 0, "No guard task files generated"
 
+    def test_finally_no_run_after(self, build_dir):
+        tekton = build_dir / "tekton"
+        doc = yaml.safe_load((tekton / "cluster-pipeline.yaml").read_text())
+        for task in doc["spec"].get("finally", []):
+            assert "runAfter" not in task, (
+                f"Finally task {task['name']} has runAfter"
+                " (Tekton forbids runAfter in finally tasks)"
+            )
+
+    def test_finally_tasks_are_composite(self, build_dir):
+        tekton = build_dir / "tekton"
+        doc = yaml.safe_load((tekton / "cluster-pipeline.yaml").read_text())
+        for pipeline_task in doc["spec"].get("finally", []):
+            task_file = tekton / f"task-{pipeline_task['name']}.yaml"
+            assert task_file.exists(), f"Missing task file for {pipeline_task['name']}"
+            task_doc = yaml.safe_load(task_file.read_text())
+            steps = task_doc["spec"]["steps"]
+            assert len(steps) >= 2, (
+                f"Finally task {pipeline_task['name']} should combine"
+                f" multiple teardown steps, got {len(steps)}"
+            )
+
     def test_no_nested_pipeline_files(self, build_dir):
         tekton = build_dir / "tekton"
         node_pipelines = [f for f in tekton.iterdir() if f.name.startswith("node-")]
