@@ -1,117 +1,245 @@
 # Assisted by Claude Opus 4.6
-apiVersion: v1
-kind: Namespace
+# Apply with: oc process -f setup/namespaces-and-pvcs.yaml -p UAT_USER=<username> | oc apply -f -
+apiVersion: template.openshift.io/v1
+kind: Template
 metadata:
-  name: uat-project
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: uat-peer
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: uat-project-storage
-  namespace: uat-project
-spec:
-  accessModes:
-    - ReadWriteMany
-  storageClassName: nfs-csi
-  resources:
-    requests:
-      storage: 100Gi
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: uat-peer-storage
-  namespace: uat-peer
-spec:
-  accessModes:
-    - ReadWriteMany
-  storageClassName: nfs-csi
-  resources:
-    requests:
-      storage: 100Gi
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: uat-user-role
-  namespace: uat-project
-rules:
-  - apiGroups: [""]
-    resources: ["pods", "pods/log"]
-    verbs: ["create", "get", "list", "watch", "delete"]
-  - apiGroups: [""]
-    resources: ["pods/exec"]
-    verbs: ["create"]
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["create", "get", "list", "watch", "delete"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["jobset.x-k8s.io"]
-    resources: ["jobsets"]
-    verbs: ["create", "get", "list", "watch", "delete"]
-  - apiGroups: ["kubeflow.org"]
-    resources: ["pytorchjobs", "tfjobs", "mpijobs", "xgboostjobs"]
-    verbs: ["create", "get", "list", "watch", "delete"]
-  - apiGroups: ["serving.kserve.io"]
-    resources: ["inferenceservices", "servingruntimes"]
-    verbs: ["create", "get", "list", "watch", "delete"]
-  - apiGroups: ["ray.io"]
-    resources: ["rayjobs", "rayclusters", "rayservices"]
-    verbs: ["create", "get", "list", "watch", "delete"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: uat-user-asanaullah
-  namespace: uat-project
-subjects:
-  - kind: User
-    name: asanaullah
-    apiGroup: rbac.authorization.k8s.io
-roleRef:
-  kind: Role
-  name: uat-user-role
-  apiGroup: rbac.authorization.k8s.io
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: uat-user-role
-  namespace: uat-peer
-rules:
-  - apiGroups: [""]
-    resources: ["pods", "pods/log"]
-    verbs: ["create", "get", "list", "watch", "delete"]
-  - apiGroups: [""]
-    resources: ["pods/exec"]
-    verbs: ["create"]
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["create", "get", "list", "watch", "delete"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: uat-user-asanaullah
-  namespace: uat-peer
-subjects:
-  - kind: User
-    name: asanaullah
-    apiGroup: rbac.authorization.k8s.io
-roleRef:
-  kind: Role
-  name: uat-user-role
-  apiGroup: rbac.authorization.k8s.io
+  name: uat-setup
+parameters:
+  - name: UAT_USER
+    description: OpenShift username for RBAC bindings
+    required: true
+objects:
+  # ---- Namespaces ----
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: uat-project
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: uat-peer
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: uat-admin
+
+  # ---- PVCs ----
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: uat-project-storage
+      namespace: uat-project
+    spec:
+      accessModes:
+        - ReadWriteMany
+      storageClassName: nfs-csi
+      resources:
+        requests:
+          storage: 100Gi
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: uat-peer-storage
+      namespace: uat-peer
+    spec:
+      accessModes:
+        - ReadWriteMany
+      storageClassName: nfs-csi
+      resources:
+        requests:
+          storage: 100Gi
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: uat-admin-storage
+      namespace: uat-admin
+    spec:
+      accessModes:
+        - ReadWriteMany
+      storageClassName: nfs-csi
+      resources:
+        requests:
+          storage: 100Gi
+
+  # ---- uat-admin ServiceAccount ----
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: uat-sa
+      namespace: uat-admin
+
+  # ---- uat-project RBAC ----
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: uat-user-role
+      namespace: uat-project
+    rules:
+      - apiGroups: [""]
+        resources: ["pods", "pods/log"]
+        verbs: ["create", "get", "list", "watch", "delete"]
+      - apiGroups: [""]
+        resources: ["pods/exec"]
+        verbs: ["create"]
+      - apiGroups: [""]
+        resources: ["services"]
+        verbs: ["create", "get", "list", "watch", "delete"]
+      - apiGroups: [""]
+        resources: ["configmaps"]
+        verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+      - apiGroups: ["batch"]
+        resources: ["jobs"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: ["jobset.x-k8s.io"]
+        resources: ["jobsets"]
+        verbs: ["create", "get", "list", "watch", "delete"]
+      - apiGroups: ["kubeflow.org"]
+        resources: ["pytorchjobs", "tfjobs", "mpijobs", "xgboostjobs"]
+        verbs: ["create", "get", "list", "watch", "delete"]
+      - apiGroups: ["serving.kserve.io"]
+        resources: ["inferenceservices", "servingruntimes"]
+        verbs: ["create", "get", "list", "watch", "delete"]
+      - apiGroups: ["ray.io"]
+        resources: ["rayjobs", "rayclusters", "rayservices"]
+        verbs: ["create", "get", "list", "watch", "delete"]
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: uat-user-binding
+      namespace: uat-project
+    subjects:
+      - kind: User
+        name: ${UAT_USER}
+        apiGroup: rbac.authorization.k8s.io
+    roleRef:
+      kind: Role
+      name: uat-user-role
+      apiGroup: rbac.authorization.k8s.io
+
+  # ---- uat-peer RBAC ----
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: uat-user-role
+      namespace: uat-peer
+    rules:
+      - apiGroups: [""]
+        resources: ["pods", "pods/log"]
+        verbs: ["create", "get", "list", "watch", "delete"]
+      - apiGroups: [""]
+        resources: ["pods/exec"]
+        verbs: ["create"]
+      - apiGroups: [""]
+        resources: ["services"]
+        verbs: ["create", "get", "list", "watch", "delete"]
+      - apiGroups: [""]
+        resources: ["configmaps"]
+        verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: uat-user-binding
+      namespace: uat-peer
+    subjects:
+      - kind: User
+        name: ${UAT_USER}
+        apiGroup: rbac.authorization.k8s.io
+    roleRef:
+      kind: Role
+      name: uat-user-role
+      apiGroup: rbac.authorization.k8s.io
+
+  # ---- uat-admin RBAC (namespace-scoped) ----
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: uat-admin-role
+      namespace: uat-admin
+    rules:
+      - apiGroups: [""]
+        resources: ["pods", "pods/log"]
+        verbs: ["create", "get", "list", "watch", "delete"]
+      - apiGroups: [""]
+        resources: ["pods/exec"]
+        verbs: ["create"]
+      - apiGroups: [""]
+        resources: ["services"]
+        verbs: ["create", "get", "list", "watch", "delete"]
+      - apiGroups: [""]
+        resources: ["configmaps"]
+        verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+      - apiGroups: ["batch"]
+        resources: ["jobs"]
+        verbs: ["get", "list", "watch"]
+      - apiGroups: ["serving.kserve.io"]
+        resources: ["inferenceservices", "servingruntimes"]
+        verbs: ["create", "get", "list", "watch", "delete"]
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: uat-sa-admin-role
+      namespace: uat-admin
+    subjects:
+      - kind: ServiceAccount
+        name: uat-sa
+        namespace: uat-admin
+    roleRef:
+      kind: Role
+      name: uat-admin-role
+      apiGroup: rbac.authorization.k8s.io
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: uat-user-binding
+      namespace: uat-admin
+    subjects:
+      - kind: User
+        name: ${UAT_USER}
+        apiGroup: rbac.authorization.k8s.io
+    roleRef:
+      kind: Role
+      name: uat-admin-role
+      apiGroup: rbac.authorization.k8s.io
+
+  # ---- uat-admin RBAC (cluster-scoped, for Category 2 checks) ----
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    metadata:
+      name: uat-admin-cluster-role
+    rules:
+      - apiGroups: [""]
+        resources: ["nodes"]
+        verbs: ["get", "list"]
+      - apiGroups: ["apps"]
+        resources: ["deployments"]
+        verbs: ["get"]
+      - apiGroups: [""]
+        resources: ["pods"]
+        verbs: ["list"]
+      - apiGroups: ["datasciencecluster.opendatahub.io"]
+        resources: ["datascienceclusters"]
+        verbs: ["get", "list"]
+      - apiGroups: ["dscinitialization.opendatahub.io"]
+        resources: ["dscinitializations"]
+        verbs: ["get", "list"]
+      - apiGroups: ["nvidia.com"]
+        resources: ["clusterpolicies"]
+        verbs: ["get", "list"]
+      - apiGroups: ["nfd.openshift.io"]
+        resources: ["nodefeaturediscoveries"]
+        verbs: ["get", "list"]
+      - apiGroups: ["maistra.io"]
+        resources: ["servicemeshcontrolplanes"]
+        verbs: ["get", "list"]
+  - apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    metadata:
+      name: uat-sa-admin-cluster-role
+    subjects:
+      - kind: ServiceAccount
+        name: uat-sa
+        namespace: uat-admin
+    roleRef:
+      kind: ClusterRole
+      name: uat-admin-cluster-role
+      apiGroup: rbac.authorization.k8s.io

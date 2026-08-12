@@ -10,46 +10,47 @@ Platform prerequisites. Checks that must pass before GPU workloads run.
 | Test | Description |
 |------|-------------|
 | [platform-check](#1-platform-check) | RBAC permissions, API groups, and operator CRD registration |
-| [component](#2-component) | Node hardware and software validation |
-| [iperf3](#3-iperf3) | Inter-node TCP bandwidth |
+| [platform-check-admin](#2-platform-check-admin) | Operator health, CR status, DSC components, GPU node labels, required pods |
+| [component](#3-component) | Node hardware and software validation |
+| [iperf3](#4-iperf3) | Inter-node TCP bandwidth |
 
 ### Operator
 Model serving through cluster operators and CRDs.
 
 | Test | Description |
 |------|-------------|
-| [kserve](#5-kserve) | KServe InferenceService deployment and inference validation |
+| [kserve](#6-kserve) | KServe InferenceService deployment and inference validation |
 
 ### Single-GPU Performance
 Inference benchmarks on a single GPU.
 
 | Test | Description |
 |------|-------------|
-| [guidellm](#6-guidellm) | vLLM + guidellm benchmark sweeps |
-| [inference-perf](#7-inference-perf) | vLLM + inference-perf benchmark sweeps |
+| [guidellm](#7-guidellm) | vLLM + guidellm benchmark sweeps |
+| [inference-perf](#8-inference-perf) | vLLM + inference-perf benchmark sweeps |
 
 ### Multi-GPU Performance
 Workloads that stress GPU-to-GPU communication fabrics.
 
 | Test | Description |
 |------|-------------|
-| [chunked-prefill](#8-chunked-prefill) | NCCL over NVLink, tensor-parallel inference |
-| [llm-d-local](#9-llm-d-local) | NIXL over NVLink, disaggregated prefill/decode |
+| [chunked-prefill](#9-chunked-prefill) | NCCL over NVLink, tensor-parallel inference |
+| [llm-d-local](#10-llm-d-local) | NIXL over NVLink, disaggregated prefill/decode |
 
 ### Interactive Environments
 
 | Test | Description |
 |------|-------------|
-| [dev-env](#4-dev-env) | Jupyter notebook server with CUDA validation |
+| [dev-env](#5-dev-env) | Jupyter notebook server with CUDA validation |
 
 ### Multi-Tenancy
 Namespace isolation and cross-tenant performance impact. Isolation tests verify that network boundaries between namespaces are enforced. Contention tests deploy competing GPU workloads in a peer namespace and measure the performance impact on the project namespace under different load intensities.
 
 | Test | Description |
 |------|-------------|
-| [ping](#10-ping) | Cross-namespace service connectivity |
-| [peer-load-high](#11-peer-load-high) | Inference performance under high cross-namespace GPU load |
-| [peer-load-low](#12-peer-load-low) | Inference performance under low cross-namespace GPU load |
+| [ping](#11-ping) | Cross-namespace service connectivity |
+| [peer-load-high](#12-peer-load-high) | Inference performance under high cross-namespace GPU load |
+| [peer-load-low](#13-peer-load-low) | Inference performance under low cross-namespace GPU load |
 
 ## Tests
 
@@ -120,7 +121,103 @@ The permission checks are there to verify that the test pod is sandboxed. If any
 
 ---
 
-## 2. component
+## 2. platform-check-admin
+
+### Purpose
+
+This test is the admin counterpart to platform-check, ported from [memalhot/open-science-test-cases/operators/checks.sh](https://github.com/memalhot/open-science-test-cases/blob/main/operators/checks.sh). Where platform-check validates CRD existence using the Discovery API (available to any user), this test reads live operator Deployments, CR status fields, DSC component conditions, GPU node labels, and required pods across operator namespaces. These checks require cross-namespace and node-level read access, so the test runs under the `uat-sa` ServiceAccount in the `uat-admin` namespace with a ClusterRole.
+
+### Architecture
+
+```
+checker [pass-fail, ephemeral, uat-admin namespace, uat-sa SA]
+    reads operator Deployments across namespaces
+    reads CR status via dynamic client
+    reads node labels
+    lists pods across namespaces
+```
+
+This is a single ephemeral pod with no GPUs, no server, no service, and no sweep phase.
+
+### Infrastructure
+
+| Name | Image | GPUs | Service | Key config |
+|------|-------|------|---------|------------|
+| checker | `registry.redhat.io/ubi9/ubi:9.8` | none | none | `ADMIN_CHECKS` env (JSON array of check objects), `serviceAccountName: uat-sa` |
+
+The list of checks is defined in the test YAML and passed as a JSON array through the `ADMIN_CHECKS` environment variable. Five check types are supported, all returning `"yes"` or `"no"`:
+
+| Check type | What it does | Fields |
+|------------|-------------|--------|
+| `deployment` | Checks if a Deployment has `Available: True` | `name`, `namespace` |
+| `crField` | Checks a CR's `.status.<field>` against an expected value | `group`, `version`, `resource`, `field`, `value` |
+| `crCondition` | Checks if a CR's condition has `status: True` | `group`, `version`, `resource`, `conditionType` |
+| `nodeLabel` | Checks if all nodes matching a selector have a label (supports `\|` for OR) | `labelSelector`, `label` |
+| `podsRunning` | Checks if >=1 pod is Running with a label selector in a namespace | `namespace`, `labelSelector` |
+
+### Pass-fail assertions
+
+**Operator deployment health** (5 checks):
+
+1. `rhods-operator` in `redhat-ods-operator` is Available
+2. `nfd-controller-manager` in `openshift-nfd` is Available
+3. `gpu-operator` in `nvidia-gpu-operator` is Available
+4. `knative-openshift` in `openshift-serverless` is Available
+5. `istio-operator` in `openshift-operators` is Available
+
+**Configuration readiness** (2 checks):
+
+6. DataScienceCluster `.status.phase` is `Ready`
+7. ClusterPolicy `.status.state` is `ready`
+
+**CR condition checks** (11 checks):
+
+8. NodeFeatureDiscovery condition `Available` is True
+9. ServiceMeshControlPlane condition `Ready` is True
+10. DSC component `DashboardReady` is True
+11. DSC component `WorkbenchesReady` is True
+12. DSC component `DataSciencePipelinesReady` is True
+13. DSC component `CodeFlareReady` is True
+14. DSC component `KserveReady` is True
+15. DSC component `RayReady` is True
+16. DSC component `TrustyAIReady` is True
+17. DSC component `ModelMeshServingReady` is True
+18. DSC component `KueueReady` is True
+
+**GPU node labels** (2 checks):
+
+19. All GPU nodes have NFD label (`feature.node.kubernetes.io/pci-10de.present` or `pci-0302_10de.present`)
+20. All GPU nodes have `nvidia.com/gpu.count` label
+
+**Required pods running** (2 checks):
+
+21. NFD Worker pods running in `openshift-nfd` (`app=nfd-worker`)
+22. NVIDIA GPU Driver pods running in `nvidia-gpu-operator` (`app.kubernetes.io/component=nvidia-driver`)
+
+### Prerequisites
+
+The `uat-sa` ServiceAccount must exist in the `uat-admin` namespace with a ClusterRole granting:
+
+| Permission | Resources | Why |
+|-----------|-----------|-----|
+| `get` | `deployments` (in operator namespaces) | Operator health checks |
+| `get`, `list` | `datascienceclusters`, `dscinitializations` | DSC phase and component conditions |
+| `get`, `list` | `clusterpolicies` | GPU operator configuration readiness |
+| `get`, `list` | `nodefeaturediscoveries` | NFD configuration readiness |
+| `get`, `list` | `servicemeshcontrolplanes` | Service mesh health |
+| `get`, `list` | `nodes` | GPU node label checks |
+| `list` | `pods` (in operator namespaces) | Required pod checks |
+
+This SA and ClusterRole are created by `setup/namespaces-and-pvcs.yaml`. The test must be run with the `cluster/ocp-test-admin.yaml` cluster config, which targets the `uat-admin` namespace.
+
+### Design rationale
+
+This test is separated from platform-check because the two have fundamentally different security models. platform-check runs as a regular sandboxed user and validates that the sandbox is properly locked down. This test runs with elevated permissions and validates things a sandboxed user cannot see. Keeping them separate means platform-check can continue to assert that the default SA has no cross-namespace access, while this test uses a purpose-built SA with the minimum ClusterRole needed. The check types use the Kubernetes typed client for Deployments, Nodes, and Pods, and the dynamic client for custom resources (DataScienceCluster, ClusterPolicy, etc.) since those types are not in the standard client-go API. The `nodeLabel` check supports `|` in the label field for OR semantics because NFD uses different PCI label names depending on the GPU's device class (`pci-10de` for display controllers, `pci-0302_10de` for 3D controllers).
+
+
+---
+
+## 3. component
 
 ### Purpose
 
@@ -187,7 +284,7 @@ The pod requests all of the node's GPUs because `nvidia-smi topo -m` only report
 
 ---
 
-## 3. iperf3
+## 4. iperf3
 
 ### Purpose
 
@@ -228,7 +325,7 @@ The test uses `permutation` placement rather than `combination` because A->B and
 
 ---
 
-## 4. dev-env
+## 5. dev-env
 
 ### Purpose
 
@@ -273,7 +370,7 @@ The validator uses a minimal websocket client built from Go's standard library t
 
 ---
 
-## 5. kserve
+## 6. kserve
 
 ### Purpose
 
@@ -315,7 +412,7 @@ The test uses the `containers` predictor (inline container spec) rather than a s
 
 ---
 
-## 6. guidellm
+## 7. guidellm
 
 ### Purpose
 
@@ -370,7 +467,7 @@ At least one GPU must be available for the server pod to schedule. The models PV
 
 ---
 
-## 7. inference-perf
+## 8. inference-perf
 
 ### Purpose
 
@@ -425,7 +522,7 @@ At least one GPU must be available for the server pod to schedule. The models PV
 
 ---
 
-## 8. chunked-prefill
+## 9. chunked-prefill
 
 ### Purpose
 
@@ -475,7 +572,7 @@ Chunked prefill allows vLLM to interleave prefill and decode batches, which impr
 
 ---
 
-## 9. llm-d-local
+## 10. llm-d-local
 
 ### Purpose
 
@@ -543,7 +640,7 @@ The stress test is specifically structured to minimize KV cache fragmentation, w
 
 ---
 
-## 10. ping
+## 11. ping
 
 ### Purpose
 
@@ -595,7 +692,7 @@ The test uses Python's built-in `http.server` module rather than nginx because i
 
 ---
 
-## 11. peer-load-high
+## 12. peer-load-high
 
 ### Purpose
 
@@ -643,12 +740,12 @@ All GPUs on the target node must be available since peer-server takes g/2 and pr
 
 ### Design rationale
 
-The peer-load pod has no readinessProbe so it becomes Ready immediately after starting, which ensures the background load is running before the sweep pods launch. The 10 req/s rate with 4 workers creates sustained GPU pressure on the peer server without saturating it to the point of request failures. Node scope is required so both servers land on the same physical node, creating real GPU contention through shared PCIe bandwidth, NVLink fabric, memory controller, and power delivery. The GPU split uses `g // 2` for peer and `g - (g // 2)` for project, which on an odd GPU count gives the project server the extra GPU. Tensor parallelism with chunked prefill is enabled on both servers so each uses all its allocated GPUs in a single TP group, matching production-like multi-GPU serving configurations. Comparing these results against the chunked-prefill baseline (test 8) quantifies the performance impact of noisy-neighbor GPU workloads.
+The peer-load pod has no readinessProbe so it becomes Ready immediately after starting, which ensures the background load is running before the sweep pods launch. The 10 req/s rate with 4 workers creates sustained GPU pressure on the peer server without saturating it to the point of request failures. Node scope is required so both servers land on the same physical node, creating real GPU contention through shared PCIe bandwidth, NVLink fabric, memory controller, and power delivery. The GPU split uses `g // 2` for peer and `g - (g // 2)` for project, which on an odd GPU count gives the project server the extra GPU. Tensor parallelism with chunked prefill is enabled on both servers so each uses all its allocated GPUs in a single TP group, matching production-like multi-GPU serving configurations. Comparing these results against the chunked-prefill baseline (test 9) quantifies the performance impact of noisy-neighbor GPU workloads.
 
 
 ---
 
-## 12. peer-load-low
+## 13. peer-load-low
 
 ### Purpose
 
@@ -680,11 +777,11 @@ project-server [persistent, project namespace]
 
 ### Sweep entries
 
-Same as peer-load-high. See [peer-load-high sweep entries](#11-peer-load-high).
+Same as peer-load-high. See [peer-load-high sweep entries](#12-peer-load-high).
 
 ### Prerequisites
 
-Same as peer-load-high. See [peer-load-high prerequisites](#11-peer-load-high).
+Same as peer-load-high. See [peer-load-high prerequisites](#12-peer-load-high).
 
 ### Design rationale
 

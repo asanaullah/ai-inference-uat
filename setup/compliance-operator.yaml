@@ -1,0 +1,48 @@
+# Apply with: oc apply -f setup/compliance-operator.yaml
+# Source: Taj's OpenShift Compliance Operator Implementation Guide
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-compliance
+  labels:
+    openshift.io/cluster-monitoring: "true"
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: compliance-operator-group
+  namespace: openshift-compliance
+spec:
+  targetNamespaces:
+    - openshift-compliance
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: compliance-operator-sub
+  namespace: openshift-compliance
+spec:
+  channel: "stable"
+  name: compliance-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+---
+# NIST 800-53 Moderate scan — daily at 1AM, no auto-remediation
+apiVersion: compliance.openshift.io/v1alpha1
+kind: ScanSettingBinding
+metadata:
+  name: nist-moderate-compliance
+  namespace: openshift-compliance
+profiles:
+  - name: ocp4-moderate
+    kind: Profile
+    apiGroup: compliance.openshift.io/v1alpha1
+  - name: rhcos4-moderate
+    kind: Profile
+    apiGroup: compliance.openshift.io/v1alpha1
+settingsRef:
+  name: default
+  kind: ScanSetting
+  apiGroup: compliance.openshift.io/v1alpha1

@@ -1,0 +1,62 @@
+# Apply with: oc apply -f setup/rhacs-operator.yaml
+# Source: Taj's Red Hat Advanced Cluster Security Operator Implementation Guide
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rhacs-operator
+  labels:
+    openshift.io/cluster-monitoring: "true"
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: rhacs-operator-group
+  namespace: rhacs-operator
+spec:
+  targetNamespaces:
+    - rhacs-operator
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhacs-operator-sub
+  namespace: rhacs-operator
+spec:
+  channel: "stable"
+  name: rhacs-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+---
+apiVersion: platform.stackrox.io/v1alpha1
+kind: Central
+metadata:
+  name: stackrox-central
+  namespace: rhacs-operator
+spec:
+  central:
+    exposure:
+      route:
+        enabled: true
+    persistence:
+      persistentVolumeClaim:
+        claimName: stackrox-db
+  scanner:
+    scannerComponent: Enabled
+---
+apiVersion: platform.stackrox.io/v1alpha1
+kind: SecuredCluster
+metadata:
+  name: target-managed-cluster
+  namespace: rhacs-operator
+spec:
+  clusterName: "uat-cluster"
+  centralEndpoint: "central.rhacs-operator.svc:443"
+  admissionControl:
+    listenOnCreates: true
+    listenOnUpdates: true
+  perNodeCollection:
+    enabled: true
+    tuner:
+      type: Auto

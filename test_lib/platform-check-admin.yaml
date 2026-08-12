@@ -1,0 +1,181 @@
+apiVersion: uat.openshift.io/v1
+kind: Test
+metadata:
+  name: platform-check-admin
+  version: v0.0.1
+  description: >-
+    Validate operator deployment health, CR status, DSC component conditions,
+    GPU node labels, and required pods across namespaces using admin SA
+  supportedScopes:
+    - cluster
+spec:
+  source:
+    ginkgo: platform-check-admin.go
+
+  serverConfig:
+    checks:
+      # Operator deployment health
+      - type: deployment
+        name: rhods-operator
+        namespace: redhat-ods-operator
+        expected: "yes"
+      - type: deployment
+        name: nfd-controller-manager
+        namespace: openshift-nfd
+        expected: "yes"
+      - type: deployment
+        name: gpu-operator
+        namespace: nvidia-gpu-operator
+        expected: "yes"
+      - type: deployment
+        name: knative-openshift
+        namespace: openshift-serverless
+        expected: "yes"
+      - type: deployment
+        name: istio-operator
+        namespace: openshift-operators
+        expected: "yes"
+
+      # Configuration readiness
+      - type: crField
+        group: datasciencecluster.opendatahub.io
+        version: v1
+        resource: datascienceclusters
+        field: phase
+        value: Ready
+        expected: "yes"
+      - type: crField
+        group: nvidia.com
+        version: v1
+        resource: clusterpolicies
+        field: state
+        value: ready
+        expected: "yes"
+
+      # CR condition checks
+      - type: crCondition
+        group: nfd.openshift.io
+        version: v1
+        resource: nodefeaturediscoveries
+        conditionType: Available
+        expected: "yes"
+      - type: crCondition
+        group: maistra.io
+        version: v2
+        resource: servicemeshcontrolplanes
+        conditionType: Ready
+        expected: "yes"
+
+      # DSC component conditions
+      - type: crCondition
+        group: datasciencecluster.opendatahub.io
+        version: v1
+        resource: datascienceclusters
+        conditionType: DashboardReady
+        expected: "yes"
+      - type: crCondition
+        group: datasciencecluster.opendatahub.io
+        version: v1
+        resource: datascienceclusters
+        conditionType: WorkbenchesReady
+        expected: "yes"
+      - type: crCondition
+        group: datasciencecluster.opendatahub.io
+        version: v1
+        resource: datascienceclusters
+        conditionType: DataSciencePipelinesReady
+        expected: "yes"
+      - type: crCondition
+        group: datasciencecluster.opendatahub.io
+        version: v1
+        resource: datascienceclusters
+        conditionType: CodeFlareReady
+        expected: "yes"
+      - type: crCondition
+        group: datasciencecluster.opendatahub.io
+        version: v1
+        resource: datascienceclusters
+        conditionType: KserveReady
+        expected: "yes"
+      - type: crCondition
+        group: datasciencecluster.opendatahub.io
+        version: v1
+        resource: datascienceclusters
+        conditionType: RayReady
+        expected: "yes"
+      - type: crCondition
+        group: datasciencecluster.opendatahub.io
+        version: v1
+        resource: datascienceclusters
+        conditionType: TrustyAIReady
+        expected: "yes"
+      - type: crCondition
+        group: datasciencecluster.opendatahub.io
+        version: v1
+        resource: datascienceclusters
+        conditionType: ModelMeshServingReady
+        expected: "yes"
+      - type: crCondition
+        group: datasciencecluster.opendatahub.io
+        version: v1
+        resource: datascienceclusters
+        conditionType: KueueReady
+        expected: "yes"
+
+      # GPU node labels
+      - type: nodeLabel
+        labelSelector: nvidia.com/gpu.present=true
+        label: "feature.node.kubernetes.io/pci-10de.present|feature.node.kubernetes.io/pci-0302_10de.present"
+        expected: "yes"
+      - type: nodeLabel
+        labelSelector: nvidia.com/gpu.present=true
+        label: nvidia.com/gpu.count
+        expected: "yes"
+
+      # Compliance Operator
+      - type: deployment
+        name: compliance-operator
+        namespace: openshift-compliance
+        expected: "yes"
+      - type: crField
+        group: compliance.openshift.io
+        version: v1alpha1
+        resource: compliancesuites
+        field: result
+        value: Compliant
+        expected: "yes"
+
+      # RHACS
+      - type: deployment
+        name: central
+        namespace: rhacs-operator
+        expected: "yes"
+      - type: deployment
+        name: scanner
+        namespace: rhacs-operator
+        expected: "yes"
+      - type: crCondition
+        group: platform.stackrox.io
+        version: v1alpha1
+        resource: securedclusters
+        conditionType: Ready
+        expected: "yes"
+
+      # Required pods running
+      - type: podsRunning
+        namespace: openshift-nfd
+        labelSelector: app=nfd-worker
+        expected: "yes"
+      - type: podsRunning
+        namespace: nvidia-gpu-operator
+        labelSelector: app.kubernetes.io/component=nvidia-driver
+        expected: "yes"
+
+  dag:
+    - name: checker
+      image: registry.redhat.io/ubi9/ubi:9.8
+      serviceAccountName: uat-sa
+      labelFilter: pass-fail
+      env:
+        - name: ADMIN_CHECKS
+          value: '{{ serverConfig.checks | toJson }}'

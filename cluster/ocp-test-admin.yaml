@@ -1,0 +1,74 @@
+# Assisted by Claude Opus 4.6
+apiVersion: uat.openshift.io/v1
+kind: ClusterTest
+metadata:
+  name: ocp-uat-admin
+spec:
+  compliance:
+    fipsEnabled: true
+
+  nodes:
+    - name: wrk-6
+      componentValidation:
+        sanity:
+          nvidia.com/gpu: 4
+          nvidia.com/gpu.memory: 81559
+          cpu: 192
+          resourceNames:
+            nvidia.com/gpu: NVIDIA-H100-80GB-HBM3
+            cpu: AMD EPYC 9754 128-Core Processor
+          nvlink: NV6
+          nvlinkTopology: all-to-all
+          nvlinkP2pBandwidth: 150
+          pcieWidth: 16
+          pcieGen: 5
+          memory: 1512Gi
+          numaNodes: 2
+        ideal:
+          cudaDriverVersion: "580.105.08"
+          gpuPowerLimit: 700
+          gpuPersistenceMode: true
+          kernel: 5.14.0-570.106.1.el9_6.x86_64
+          hugepages: 8000Mi
+          cpuFreqGovernor: performance
+          cpuIdleDriver: acpi_idle
+          cpuIdleGovernor: menu
+          cpuCStatesEnabled: [POLL, C1, C2]
+          transparentHugepages: madvise
+
+    - name: wrk-4
+      componentValidation:
+        sanity:
+          nvidia.com/gpu: 2
+          nvidia.com/gpu.memory: 40960
+          cpu: 128
+          resourceNames:
+            nvidia.com/gpu: NVIDIA-A100-SXM4-40GB
+            cpu: Intel(R) Xeon(R) Platinum 8358 CPU @ 2.60GHz
+          nvlink: NV4
+          nvlinkTopology: all-to-all
+          nvlinkP2pBandwidth: 100
+          pcieWidth: 16
+          pcieGen: 4
+          memory: 1007Gi
+          numaNodes: 2
+        ideal:
+          cudaDriverVersion: "580.105.08"
+          gpuPowerLimit: 400
+          gpuPersistenceMode: true
+          kernel: 5.14.0-570.106.1.el9_6.x86_64
+          hugepages: 8000Mi
+          cpuFreqGovernor: performance
+          cpuIdleDriver: intel_idle
+          cpuIdleGovernor: menu
+          cpuCStatesEnabled: [POLL, C1, C1E]
+          transparentHugepages: madvise
+
+
+  namespace: uat-admin
+
+  storage:
+    pvc: uat-admin-storage
+    basePath: uat/results
+    models:
+      pvc: uat-models
