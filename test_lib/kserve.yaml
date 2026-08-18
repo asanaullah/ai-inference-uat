@@ -60,6 +60,6 @@ spec:
       labelFilter: pass-fail
       env:
         - name: SERVICE_URL
-          value: 'http://{{ k8sNamePrefix }}-isvc-predictor:8080'
+          value: 'http://{{ resource_name }}-predictor:8080'
         - name: MODEL_NAME
           value: '{{ serverConfig.model }}'

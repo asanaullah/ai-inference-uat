@@ -6,12 +6,12 @@ metadata:
   namespace: {{ namespace }}
   labels:
     app.kubernetes.io/managed-by: {{ managed_by_label }}
-    test: {{ test }}
+    test: {{ test_label }}
 {% if node %}
-    node: {{ node }}
+    node: {{ node_label }}
 {% endif %}
-{% if chain is defined and chain %}
-    chain: {{ chain }}
+{% if chain_label is defined and chain_label %}
+    chain: {{ chain_label | yaml_quote }}
 {% endif %}
 spec:
 {{ spec | to_yaml | indent(2, first=True) }}

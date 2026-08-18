@@ -12,6 +12,7 @@ from .common import (
     add_persistent_steps,
     add_resource_steps,
     add_teardown_steps,
+    fit,
     render_string,
     validate_node_resources,
 )
@@ -80,14 +81,19 @@ def compute_cluster_steps(
         else:
             selected_sets = all_sets
 
+    if len(selected_sets) > 9999:
+        raise ValueError(
+            f"Too many sets: test '{test.name}' produces "
+            f"{len(selected_sets)} sets, maximum is 9999"
+        )
     multi_set = len(selected_sets) > 1
     set_mappings: dict[str, list[str]] = {}
 
     # Phase 3 — Step generation
     steps: list[Step] = []
     for set_idx, node_set in enumerate(selected_sets):
-        set_key = f"set{set_idx}" if multi_set else ""
-        set_mappings[set_key or "set0"] = [n.name for n in node_set]
+        set_key = f"{set_idx:04d}" if multi_set else ""
+        set_mappings[set_key or "0000"] = [n.name for n in node_set]
 
         # Resource validation per target node
         if placement.set_size == 1:
@@ -201,7 +207,6 @@ def _generate_set_steps(
 ) -> None:
     set_segment = f"-{set_key}" if set_key else ""
     step_prefix = f"{test.test_id}-{test.name}{set_segment}"
-    res_prefix = step_prefix
 
     services: dict[str, dict[str, Any]] = {}
     has_persistent = False
@@ -237,7 +242,6 @@ def _generate_set_steps(
                 steps,
                 dag_step,
                 step_prefix,
-                res_prefix,
                 node=node,
                 step_node=set_key,
                 test=test,
@@ -247,7 +251,7 @@ def _generate_set_steps(
                 jinja_env=jinja_env,
                 scope=scope,
                 node_spec_dict=node_spec_dict,
-                chain=set_key,
+                set_key=set_key,
             )
         elif dag_step.persists_through_sweep:
             if dag_step.peer:
@@ -258,7 +262,6 @@ def _generate_set_steps(
                 steps,
                 dag_step,
                 step_prefix,
-                res_prefix,
                 node=node,
                 step_node=set_key,
                 test=test,
@@ -270,16 +273,16 @@ def _generate_set_steps(
                 jinja_env=jinja_env,
                 scope=scope,
                 node_spec_dict=node_spec_dict,
-                chain=set_key,
+                set_key=set_key,
                 models_storage=step_models,
             )
         else:
-            sel_extra = f",chain={set_key}" if set_key else ""
+            chain_label = fit(set_key, 4) if set_key else ""
+            sel_extra = f",chain={chain_label}" if chain_label else ""
             add_ephemeral_steps(
                 steps,
                 dag_step,
                 step_prefix,
-                res_prefix,
                 node=node,
                 step_node=set_key,
                 test=test,
@@ -292,20 +295,24 @@ def _generate_set_steps(
                 scope=scope,
                 selector_extra=sel_extra,
                 node_spec_dict=node_spec_dict,
-                chain=set_key,
+                set_key=set_key,
                 models_storage=step_models,
             )
 
-    selector = f"test={test.name},chain={set_key}" if set_key else f"test={test.name}"
+    test_label = fit(test.name, 63)
+    chain_label = fit(set_key, 4) if set_key else ""
+    selector = (
+        f"test={test_label},chain={chain_label}" if set_key else f"test={test_label}"
+    )
     add_teardown_steps(
         steps,
         has_persistent,
         step_prefix,
-        res_prefix,
         selector=selector,
         step_node=set_key,
         test=test,
         scope=scope,
+        set_key=set_key,
         extra_resource_types=extra_resource_types,
         namespace=namespace,
     )
@@ -314,11 +321,11 @@ def _generate_set_steps(
             steps,
             has_peer_persistent,
             f"{step_prefix}-peer",
-            f"{res_prefix}-peer",
             selector=selector,
             step_node=set_key,
             test=test,
             scope=scope,
+            set_key=set_key,
             extra_resource_types=extra_peer_resource_types,
             namespace=peer_namespace,
         )

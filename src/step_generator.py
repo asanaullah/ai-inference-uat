@@ -16,7 +16,6 @@ from .common import (
     load_tool_config,
     render_manifest,
     render_template,
-    sanitize_node_name,
     validate_node_resources,
 )
 from .models import ClusterTestSpec, LoadedTest, Step, StepsFile, ToolConfig
@@ -414,8 +413,6 @@ def generate_steps(
         raise SystemExit(1)
 
     cs = cluster.spec
-    for node_spec in cs.nodes:
-        node_spec.sanitized_name = sanitize_node_name(node_spec.name)
 
     print(f"Cluster: {Path(cluster_path).stem}")
     print(f"Namespace: {cs.namespace}")

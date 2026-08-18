@@ -6,7 +6,7 @@ from pathlib import Path
 
 from jinja2 import Environment
 
-from ..common import render_manifest
+from ..common import build_resource_name, render_manifest
 from ..models import ClusterTestSpec, Step, ToolConfig
 
 
@@ -123,7 +123,11 @@ def write_tekton(
                 chain_last[(test_id, chain_key)] = prev_step
 
         # Generate guard task for this test
-        guard_name = f"guard-{test_id}-{test_name}"
+        guard_name = build_resource_name(
+            test_id=test_id,
+            resource_type="grd",
+            step=test_name,
+        )
         guard_on_error = (
             "continue" if test_on_failure in ("continue", "skipTest") else "stopAndFail"
         )
@@ -357,7 +361,7 @@ def _extract_test_order(
         if step.test_id and step.test_id not in seen:
             seen.add(step.test_id)
             result.append((step.test_id, step.test, step.on_failure, step.scope))
-    result.sort(key=lambda x: int(x[0].lstrip("t")))
+    result.sort(key=lambda x: int(x[0]))
     return result
 
 

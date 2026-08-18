@@ -10,6 +10,7 @@ from .common import (
     add_persistent_steps,
     add_resource_steps,
     add_teardown_steps,
+    fit,
 )
 from .models import LoadedTest, ModelsStorageConfig, NodeSpec, Step, ToolConfig
 
@@ -30,7 +31,6 @@ def compute_node_steps(
 ) -> list[Step]:
     steps: list[Step] = []
     node = node_spec.name
-    safe_node = node_spec.sanitized_name or node
     node_spec_dict = node_spec.model_dump(by_alias=True)
 
     services: dict[str, dict[str, Any]] = {}
@@ -41,7 +41,6 @@ def compute_node_steps(
     extra_peer_resource_types: set[str] = set()
 
     step_prefix = f"{test.test_id}-{test.name}-{node}"
-    res_prefix = f"{test.test_id}-{test.name}-{safe_node}"
 
     for dag_step in test.spec.dag:
         step_ns = peer_namespace if dag_step.peer else namespace
@@ -61,7 +60,6 @@ def compute_node_steps(
                 steps,
                 dag_step,
                 step_prefix,
-                res_prefix,
                 node=node,
                 step_node=node,
                 test=test,
@@ -81,7 +79,6 @@ def compute_node_steps(
                 steps,
                 dag_step,
                 step_prefix,
-                res_prefix,
                 node=node,
                 step_node=node,
                 test=test,
@@ -96,11 +93,11 @@ def compute_node_steps(
                 models_storage=step_models,
             )
         else:
+            node_label = fit(node, 10)
             add_ephemeral_steps(
                 steps,
                 dag_step,
                 step_prefix,
-                res_prefix,
                 node=node,
                 step_node=node,
                 test=test,
@@ -111,21 +108,23 @@ def compute_node_steps(
                 services=services,
                 jinja_env=jinja_env,
                 scope="node",
-                selector_extra=f",node={node}",
+                selector_extra=f",node={node_label}",
                 node_spec_dict=node_spec_dict,
                 models_storage=step_models,
             )
 
-    selector = f"test={test.name},node={node}"
+    test_label = fit(test.name, 63)
+    node_label = fit(node, 10)
+    selector = f"test={test_label},node={node_label}"
     add_teardown_steps(
         steps,
         has_persistent,
         step_prefix,
-        res_prefix,
         selector=selector,
         step_node=node,
         test=test,
         scope="node",
+        node=node,
         extra_resource_types=extra_resource_types,
         namespace=namespace,
     )
@@ -134,11 +133,11 @@ def compute_node_steps(
             steps,
             has_peer_persistent,
             f"{step_prefix}-peer",
-            f"{res_prefix}-peer",
             selector=selector,
             step_node=node,
             test=test,
             scope="node",
+            node=node,
             extra_resource_types=extra_peer_resource_types,
             namespace=peer_namespace,
         )

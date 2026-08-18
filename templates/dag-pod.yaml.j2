@@ -6,13 +6,13 @@ metadata:
   namespace: {{ namespace }}
   labels:
     app.kubernetes.io/managed-by: {{ managed_by_label }}
-    test: {{ test }}
-    dag-step: {{ dag_step_name }}
+    test: {{ test_label }}
+    dag-step: {{ dag_step_label }}
 {% if node %}
-    node: {{ node }}
+    node: {{ node_label }}
 {% endif %}
-{% if chain is defined and chain %}
-    chain: {{ chain }}
+{% if chain_label is defined and chain_label %}
+    chain: {{ chain_label | yaml_quote }}
 {% endif %}
 {% for k, v in extra_labels.items() %}
     {{ k }}: {{ v | yaml_quote }}

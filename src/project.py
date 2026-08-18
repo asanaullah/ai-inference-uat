@@ -10,6 +10,7 @@ from .common import (
     add_persistent_steps,
     add_resource_steps,
     add_teardown_steps,
+    fit,
 )
 from .models import LoadedTest, ModelsStorageConfig, Step, ToolConfig
 
@@ -29,7 +30,6 @@ def compute_project_steps(
 ) -> list[Step]:
     steps: list[Step] = []
     step_prefix = f"{test.test_id}-{test.name}"
-    res_prefix = step_prefix
     scope = "project"
 
     services: dict[str, dict[str, Any]] = {}
@@ -57,7 +57,6 @@ def compute_project_steps(
                 steps,
                 dag_step,
                 step_prefix,
-                res_prefix,
                 node="",
                 step_node="",
                 test=test,
@@ -76,7 +75,6 @@ def compute_project_steps(
                 steps,
                 dag_step,
                 step_prefix,
-                res_prefix,
                 node="",
                 step_node="",
                 test=test,
@@ -94,7 +92,6 @@ def compute_project_steps(
                 steps,
                 dag_step,
                 step_prefix,
-                res_prefix,
                 node="",
                 step_node="",
                 test=test,
@@ -108,12 +105,12 @@ def compute_project_steps(
                 models_storage=step_models,
             )
 
-    selector = f"test={test.name}"
+    test_label = fit(test.name, 63)
+    selector = f"test={test_label}"
     add_teardown_steps(
         steps,
         has_persistent,
         step_prefix,
-        res_prefix,
         selector=selector,
         step_node="",
         test=test,
@@ -126,7 +123,6 @@ def compute_project_steps(
             steps,
             has_peer_persistent,
             f"{step_prefix}-peer",
-            f"{res_prefix}-peer",
             selector=selector,
             step_node="",
             test=test,

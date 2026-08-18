@@ -48,7 +48,7 @@ class TestOutputStructure:
         tekton = build_dir / "tekton"
         assert (tekton / "cluster-pipeline.yaml").exists()
         assert (tekton / "pipelinerun.yaml").exists()
-        assert any(f.name.startswith("task-guard-") for f in tekton.iterdir())
+        assert any("-grd-" in f.name for f in tekton.iterdir())
 
     def test_steps_json(self, build_dir):
         data = json.loads((build_dir / "steps.json").read_text())
@@ -120,7 +120,7 @@ class TestTektonOutput:
 
     def test_guard_tasks_exist(self, build_dir):
         tekton = build_dir / "tekton"
-        guard_files = [f for f in tekton.iterdir() if f.name.startswith("task-guard-")]
+        guard_files = [f for f in tekton.iterdir() if "-grd-" in f.name]
         assert len(guard_files) > 0, "No guard task files generated"
 
     def test_finally_no_run_after(self, build_dir):

@@ -11,7 +11,9 @@ from src.common import (
     add_resource_steps,
     add_teardown_steps,
     build_command,
+    build_resource_name,
     create_jinja_env,
+    fit,
     load_config,
     parse_k8s_quantity,
     render_env,
@@ -144,6 +146,158 @@ class TestSanitizeNodeName:
         assert result[:12] == "a" * 12
 
 
+# -- fit ----------------------------------------------------------------------
+
+
+class TestFit:
+    def test_short_value_unchanged(self):
+        assert fit("server", 16) == "server"
+
+    def test_exact_width_unchanged(self):
+        assert fit("a" * 10, 10) == "a" * 10
+
+    def test_over_width_hashes(self):
+        result = fit("vllm-server-bench", 16)
+        assert len(result) == 16
+        assert result[:11] == "vllm-server"
+        assert result[11] == "-"
+
+    def test_hash_is_deterministic(self):
+        assert fit("long-name-here-x", 10) == fit("long-name-here-x", 10)
+
+    def test_different_inputs_different_hashes(self):
+        a = fit("aaaaa-bbbbb-xxxxx", 10)
+        b = fit("aaaaa-bbbbb-yyyyy", 10)
+        assert a != b
+
+    def test_sanitizes_dots(self):
+        assert fit("node.example.com", 16) == "node-example-com"
+
+    def test_sanitizes_uppercase(self):
+        assert fit("MyNode", 10) == "mynode"
+
+    def test_empty_returns_empty(self):
+        assert fit("", 10) == ""
+
+    def test_strict_raises_on_overflow(self):
+        with pytest.raises(ValueError, match="exceeds maximum width"):
+            fit("toolong", 3, strict=True)
+
+    def test_strict_passes_when_fits(self):
+        assert fit("ok", 3, strict=True) == "ok"
+
+    def test_hash_uses_original_for_uniqueness(self):
+        a = fit("NODE.A.LONG", 10)
+        b = fit("node-a-long", 10)
+        assert a != b
+
+
+# -- build_resource_name ------------------------------------------------------
+
+
+class TestBuildResourceName:
+    def test_all_fields(self):
+        name = build_resource_name(
+            test_id="001",
+            resource_type="pod",
+            step="server",
+            node="wrk-6",
+            set_key="0000",
+            sweep="tp1",
+        )
+        assert name.startswith("ua-")
+        assert name.endswith("-t")
+        assert len(name) == 54
+
+    def test_no_optional_fields(self):
+        name = build_resource_name(test_id="001", resource_type="pod")
+        assert len(name) == 54
+        assert name.startswith("ua-001-pod-")
+        assert name.endswith("-t")
+
+    def test_unused_fields_are_dashes(self):
+        name = build_resource_name(test_id="001", resource_type="grd")
+        assert (
+            name
+            == "ua-001-grd-"
+            + "-" * 16
+            + "-"
+            + "-" * 10
+            + "-"
+            + "-" * 4
+            + "-"
+            + "-" * 8
+            + "-t"
+        )
+
+    def test_fixed_length_regardless_of_input(self):
+        short = build_resource_name(
+            test_id="001",
+            resource_type="pod",
+            step="s",
+            node="n",
+        )
+        long = build_resource_name(
+            test_id="001",
+            resource_type="pod",
+            step="vllm-server",
+            node="wrk-6",
+            set_key="0000",
+            sweep="tp1",
+        )
+        assert len(short) == len(long) == 54
+
+    def test_invalid_resource_type_raises(self):
+        with pytest.raises(ValueError, match="Invalid resource type"):
+            build_resource_name(test_id="001", resource_type="xyz")
+
+    def test_test_id_overflow_raises(self):
+        with pytest.raises(ValueError, match="exceeds maximum width"):
+            build_resource_name(test_id="1000", resource_type="pod")
+
+    def test_set_key_overflow_raises(self):
+        with pytest.raises(ValueError, match="exceeds maximum width"):
+            build_resource_name(
+                test_id="001",
+                resource_type="pod",
+                set_key="99999",
+            )
+
+    def test_step_overflow_hashes(self):
+        name = build_resource_name(
+            test_id="001",
+            resource_type="pod",
+            step="very-long-step-name-here",
+        )
+        assert len(name) == 54
+        step_field = name[8:24]
+        assert step_field[-1] != "-" or step_field == "-" * 16
+
+    def test_rfc1123_compliant(self):
+        name = build_resource_name(
+            test_id="001",
+            resource_type="pod",
+            step="server",
+            node="wrk-6",
+            set_key="0000",
+            sweep="tp1",
+        )
+        import re
+
+        assert re.match(r"^[a-z][a-z0-9\-]*[a-z]$", name)
+
+    def test_node_overflow_hashes(self):
+        name = build_resource_name(
+            test_id="001",
+            resource_type="pod",
+            step="server",
+            node="ip-10-0-141-237.us-east-2.compute.internal",
+        )
+        assert len(name) == 54
+        node_field = name[25:35]
+        assert len(node_field) == 10
+
+
 # -- build_command ------------------------------------------------------------
 
 
@@ -272,8 +426,8 @@ class TestValueFromTemplate:
             "pod_name": "test-pod",
             "namespace": "default",
             "managed_by_label": "uat",
-            "test": "test",
-            "dag_step_name": "step",
+            "test_label": "test",
+            "dag_step_label": "step",
             "node": None,
             "privileged": False,
             "image": "img:latest",
@@ -291,8 +445,7 @@ class TestValueFromTemplate:
             "extra_labels": extra_labels or {},
         }
         if template_name == "test-pod.yaml.j2":
-            ctx["sweep_id"] = "none"
-            ctx["chain"] = None
+            ctx["sweep_label"] = "none"
         return render_manifest(jinja_env, template_name, ctx)
 
     @pytest.mark.parametrize("template", ["dag-pod.yaml.j2", "test-pod.yaml.j2"])
@@ -369,8 +522,8 @@ class TestCustomPodLabels:
             "pod_name": "test-pod",
             "namespace": "default",
             "managed_by_label": "uat",
-            "test": "test",
-            "dag_step_name": "step",
+            "test_label": "test",
+            "dag_step_label": "step",
             "node": None,
             "privileged": False,
             "image": "img:latest",
@@ -388,8 +541,7 @@ class TestCustomPodLabels:
             "extra_labels": extra_labels,
         }
         if template_name == "test-pod.yaml.j2":
-            ctx["sweep_id"] = "none"
-            ctx["chain"] = None
+            ctx["sweep_label"] = "none"
         return render_manifest(jinja_env, template_name, ctx)
 
     @pytest.mark.parametrize("template", ["dag-pod.yaml.j2", "test-pod.yaml.j2"])
@@ -417,8 +569,6 @@ class TestCustomPodLabels:
         doc = yaml.safe_load(manifest)
         pod_labels = doc["metadata"]["labels"]
         assert pod_labels["custom"] == "ok"
-        # YAML last-key-wins: custom label overwrites the fixed one.
-        # This is expected — test authors control their own labels.
         assert pod_labels["test"] == "override-attempt"
 
 
@@ -483,8 +633,8 @@ class TestSidecarTemplate:
             "pod_name": "test-pod",
             "namespace": "default",
             "managed_by_label": "uat",
-            "test": "test",
-            "dag_step_name": "step",
+            "test_label": "test",
+            "dag_step_label": "step",
             "node": None,
             "privileged": False,
             "image": "img:latest",
@@ -503,8 +653,7 @@ class TestSidecarTemplate:
             "sidecars": sidecars,
         }
         if template_name == "test-pod.yaml.j2":
-            ctx["sweep_id"] = "none"
-            ctx["chain"] = None
+            ctx["sweep_label"] = "none"
         return render_manifest(jinja_env, template_name, ctx)
 
     @pytest.mark.parametrize("template", ["dag-pod.yaml.j2", "test-pod.yaml.j2"])
@@ -774,25 +923,41 @@ class TestRegisterService:
     def test_disabled_service_returns_empty(self):
         step = DAGStep(name="runner", image="test:latest")
         services: dict = {}
-        assert _register_service(step, "pfx", services) == ""
+        assert _register_service(step, _loaded_test(), services) == ""
         assert services == {}
 
     def test_service_name_includes_prefix(self):
         step = self._make_dag_step()
         services: dict = {}
-        name = _register_service(step, "t1-mytest-wrk-0", services)
-        assert name == "svc-t1-mytest-wrk-0-server"
+        name = _register_service(step, _loaded_test(), services, node="wrk-0")
+        expected = build_resource_name(
+            test_id="001",
+            resource_type="svc",
+            step="server",
+            node="wrk-0",
+        )
+        assert name == expected
         assert services["server"]["name"] == name
         assert services["server"]["url"] == f"http://{name}:8080"
 
     def test_sweep_entries_get_unique_service_names(self):
         step = self._make_dag_step()
         services: dict = {}
-        name_a = _register_service(step, "t1-mytest-wrk-0-sweep-a", services)
-        name_b = _register_service(step, "t1-mytest-wrk-0-sweep-b", services)
+        name_a = _register_service(
+            step,
+            _loaded_test(),
+            services,
+            node="wrk-0",
+            sweep="a",
+        )
+        name_b = _register_service(
+            step,
+            _loaded_test(),
+            services,
+            node="wrk-0",
+            sweep="b",
+        )
         assert name_a != name_b
-        assert "sweep-a" in name_a
-        assert "sweep-b" in name_b
 
 
 # -- add_persistent_steps / add_ephemeral_steps --------------------------------
@@ -809,7 +974,7 @@ TC_DATA = {
 }
 
 
-def _loaded_test(name="mytest", test_id="t1", timeout=None):
+def _loaded_test(name="mytest", test_id="001", timeout=None):
     spec = TestSpec(
         source={"ginkgo": "t.go"},
         dag=[{"name": "run", "image": "img", "labelFilter": "pass-fail"}],
@@ -840,7 +1005,6 @@ class TestAddPersistentSteps:
             steps,
             dag_step,
             "s-1-t-wrk-0",
-            "t1-t-wrk-0",
             "wrk-0",
             "wrk-0",
             _loaded_test(),
@@ -868,7 +1032,6 @@ class TestAddPersistentSteps:
             steps,
             dag_step,
             "s-1-t-wrk-0",
-            "t1-t-wrk-0",
             "wrk-0",
             "wrk-0",
             _loaded_test(),
@@ -880,7 +1043,13 @@ class TestAddPersistentSteps:
             env,
             "node",
         )
-        assert steps[0].config["service_name"] == "svc-t1-t-wrk-0-server"
+        expected_svc = build_resource_name(
+            test_id="001",
+            resource_type="svc",
+            step="server",
+            node="wrk-0",
+        )
+        assert steps[0].config["service_name"] == expected_svc
 
     def test_sidecar_jinja_rendering(self, env, tc):
         node_spec = {
@@ -913,7 +1082,6 @@ class TestAddPersistentSteps:
             steps,
             dag_step,
             "s-1-t-wrk-0",
-            "t1-t-wrk-0",
             "wrk-0",
             "wrk-0",
             _loaded_test(),
@@ -956,7 +1124,6 @@ class TestAddEphemeralSteps:
             steps,
             dag_step,
             "s-1-t-wrk-0",
-            "t1-t-wrk-0",
             "wrk-0",
             "wrk-0",
             _loaded_test(),
@@ -991,7 +1158,6 @@ class TestAddEphemeralSteps:
             steps,
             dag_step,
             "s-1-t-wrk-0",
-            "t1-t-wrk-0",
             "wrk-0",
             "wrk-0",
             _loaded_test(),
@@ -1005,8 +1171,22 @@ class TestAddEphemeralSteps:
         )
         assert len(steps) == 6
         res_names = [s.resource_name for s in steps]
-        assert "t1-t-wrk-0-bench-t1" in res_names
-        assert "t1-t-wrk-0-bench-t4" in res_names
+        expected_t1 = build_resource_name(
+            test_id="001",
+            resource_type="pod",
+            step="bench",
+            node="wrk-0",
+            sweep="t1",
+        )
+        expected_t4 = build_resource_name(
+            test_id="001",
+            resource_type="pod",
+            step="bench",
+            node="wrk-0",
+            sweep="t4",
+        )
+        assert expected_t1 in res_names
+        assert expected_t4 in res_names
 
     def test_sweep_service_names_unique(self, env, tc):
         dag_step = DAGStep(
@@ -1026,7 +1206,6 @@ class TestAddEphemeralSteps:
             steps,
             dag_step,
             "s-1-t-wrk-0",
-            "t1-t-wrk-0",
             "wrk-0",
             "wrk-0",
             _loaded_test(),
@@ -1227,7 +1406,7 @@ class TestResourceTemplate:
             "resource_name": "t1-test-my-cm",
             "namespace": "ns",
             "managed_by_label": "uat",
-            "test": "mytest",
+            "test_label": "mytest",
             "node": "",
             "spec": {"data": {"key": "value"}},
         }
@@ -1249,8 +1428,9 @@ class TestResourceTemplate:
             "resource_name": "res",
             "namespace": "ns",
             "managed_by_label": "uat",
-            "test": "t",
+            "test_label": "t",
             "node": "wrk-0",
+            "node_label": "wrk-0",
             "spec": {},
         }
         content = render_manifest(env, "resource.yaml.j2", ctx)
@@ -1264,14 +1444,14 @@ class TestResourceTemplate:
             "resource_name": "res",
             "namespace": "ns",
             "managed_by_label": "uat",
-            "test": "t",
+            "test_label": "t",
             "node": "",
-            "chain": "set0",
+            "chain_label": "0000",
             "spec": {},
         }
         content = render_manifest(env, "resource.yaml.j2", ctx)
         doc = yaml.safe_load(content)
-        assert doc["metadata"]["labels"]["chain"] == "set0"
+        assert doc["metadata"]["labels"]["chain"] == "0000"
 
     def test_crd_resource(self, env):
         ctx = {
@@ -1280,8 +1460,9 @@ class TestResourceTemplate:
             "resource_name": "t1-llm-d-pool",
             "namespace": "ns",
             "managed_by_label": "uat",
-            "test": "llm-d",
+            "test_label": "llm-d",
             "node": "wrk-6",
+            "node_label": "wrk-6",
             "spec": {
                 "selector": {"matchLabels": {"llm-d.ai/role": "prefill"}},
                 "targetPortNumber": 8000,
@@ -1320,8 +1501,7 @@ class TestAddResourceSteps:
         add_resource_steps(
             steps,
             dag_step,
-            "t1-t-wrk-0",
-            "t1-t-wrk-0",
+            "001-t-wrk-0",
             node="wrk-0",
             step_node="wrk-0",
             test=_loaded_test(),
@@ -1350,8 +1530,7 @@ class TestAddResourceSteps:
         add_resource_steps(
             steps,
             dag_step,
-            "t1-t-wrk-0",
-            "t1-t-wrk-0",
+            "001-t-wrk-0",
             node="wrk-0",
             step_node="wrk-0",
             test=_loaded_test(),
@@ -1361,7 +1540,13 @@ class TestAddResourceSteps:
             jinja_env=env,
             scope="node",
         )
-        assert steps[0].resource_name == "t1-t-wrk-0-pool"
+        expected = build_resource_name(
+            test_id="001",
+            resource_type="crd",
+            step="pool",
+            node="wrk-0",
+        )
+        assert steps[0].resource_name == expected
 
     def test_manifest_has_harness_labels(self, env, tc):
         dag_step = DAGStep(
@@ -1376,8 +1561,7 @@ class TestAddResourceSteps:
         add_resource_steps(
             steps,
             dag_step,
-            "t1-t-wrk-0",
-            "t1-t-wrk-0",
+            "001-t-wrk-0",
             node="wrk-0",
             step_node="wrk-0",
             test=_loaded_test(),
@@ -1414,8 +1598,7 @@ class TestAddResourceSteps:
         add_resource_steps(
             steps,
             dag_step,
-            "t1-t",
-            "t1-t",
+            "001-t",
             node="",
             step_node="",
             test=test,
@@ -1444,8 +1627,7 @@ class TestAddResourceSteps:
         add_resource_steps(
             steps,
             dag_step,
-            "t1-t",
-            "t1-t",
+            "001-t",
             node="",
             step_node="",
             test=_loaded_test(),
@@ -1468,8 +1650,7 @@ class TestTeardownResourceTypes:
         add_teardown_steps(
             steps,
             has_persistent=True,
-            step_prefix="t1-t",
-            res_prefix="t1-t",
+            step_prefix="001-t",
             selector="test=t",
             step_node="",
             test=_loaded_test(),
@@ -1483,8 +1664,7 @@ class TestTeardownResourceTypes:
         add_teardown_steps(
             steps,
             has_persistent=True,
-            step_prefix="t1-t",
-            res_prefix="t1-t",
+            step_prefix="001-t",
             selector="test=t",
             step_node="",
             test=_loaded_test(),

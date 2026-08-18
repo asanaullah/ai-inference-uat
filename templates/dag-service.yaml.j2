@@ -6,16 +6,16 @@ metadata:
   namespace: {{ namespace }}
   labels:
     app.kubernetes.io/managed-by: {{ managed_by_label }}
-    test: {{ test }}
-    dag-step: {{ dag_step_name }}
+    test: {{ test_label }}
+    dag-step: {{ dag_step_label }}
 {% if node %}
-    node: {{ node }}
+    node: {{ node_label }}
 {% endif %}
-{% if chain is defined and chain %}
-    chain: {{ chain }}
+{% if chain_label is defined and chain_label %}
+    chain: {{ chain_label | yaml_quote }}
 {% endif %}
-{% if sweep_id is defined %}
-    sweep: {{ sweep_id }}
+{% if sweep_label is defined %}
+    sweep: {{ sweep_label | yaml_quote }}
 {% endif %}
 spec:
 {% if headless %}
@@ -23,13 +23,13 @@ spec:
 {% endif %}
   selector:
     app.kubernetes.io/managed-by: {{ managed_by_label }}
-    test: {{ test }}
-    dag-step: {{ dag_step_name }}
+    test: {{ test_label }}
+    dag-step: {{ dag_step_label }}
 {% if node %}
-    node: {{ node }}
+    node: {{ node_label }}
 {% endif %}
-{% if sweep_id is defined %}
-    sweep: {{ sweep_id }}
+{% if sweep_label is defined %}
+    sweep: {{ sweep_label | yaml_quote }}
 {% endif %}
   ports:
     - port: {{ port }}

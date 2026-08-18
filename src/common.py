@@ -259,9 +259,12 @@ def load_config(
     with open(cluster_path) as f:
         cluster = ClusterTest(**yaml.safe_load(f))
 
+    if len(suite.spec.tests) > 999:
+        raise ValueError("Too many tests: maximum is 999 per suite")
+
     tests: list[LoadedTest] = []
     for i, entry in enumerate(suite.spec.tests, 1):
-        test_id = f"t{i}"
+        test_id = f"{i:03d}"
         with open(lib_dir / f"{entry.name}.yaml") as f:
             test_def = Test(**yaml.safe_load(f))
 
@@ -316,6 +319,58 @@ def sanitize_node_name(name: str) -> str:
     return f"{sanitized[:12]}-{h}"
 
 
+_RESOURCE_TYPES = frozenset(
+    {"pod", "svc", "crd", "grd", "bld", "agg", "cfg", "cln", "tdn", "ftd"}
+)
+
+_FIELD_WIDTHS = {
+    "test_id": 3,
+    "type": 3,
+    "step": 16,
+    "node": 10,
+    "set": 4,
+    "sweep": 8,
+}
+
+
+def fit(value: str, width: int, *, strict: bool = False) -> str:
+    sanitized = _INVALID_RFC1123.sub("-", value.lower()).strip("-")
+    if not sanitized:
+        return ""
+    if len(sanitized) <= width:
+        return sanitized
+    if strict:
+        raise ValueError(
+            f"Value '{value}' ({len(sanitized)} chars) exceeds maximum width of {width}"
+        )
+    h = hashlib.sha256(value.encode()).hexdigest()[:4]
+    return f"{sanitized[: width - 5]}-{h}"
+
+
+def build_resource_name(
+    *,
+    test_id: str,
+    resource_type: str,
+    step: str = "",
+    node: str = "",
+    set_key: str = "",
+    sweep: str = "",
+) -> str:
+    if resource_type not in _RESOURCE_TYPES:
+        raise ValueError(
+            f"Invalid resource type '{resource_type}'. "
+            f"Must be one of: {sorted(_RESOURCE_TYPES)}"
+        )
+    tid = fit(test_id, 3, strict=True).ljust(3, "-")
+    stp = fit(step, 16).ljust(16, "-") if step else "-" * 16
+    sk = fit(set_key, 4, strict=True).ljust(4, "-") if set_key else "-" * 4
+    swp = fit(sweep, 8).ljust(8, "-") if sweep else "-" * 8
+    if resource_type == "crd":
+        return f"ua-{tid}-{resource_type}-{stp}-{sk}-t"
+    nod = fit(node, 10).ljust(10, "-") if node else "-" * 10
+    return f"ua-{tid}-{resource_type}-{stp}-{nod}-{sk}-{swp}-t"
+
+
 _DEFAULT_RESOURCE_TYPES = "pods,services,deployments"
 
 
@@ -323,11 +378,12 @@ def add_teardown_steps(
     steps: list[Step],
     has_persistent: bool,
     step_prefix: str,
-    res_prefix: str,
     selector: str,
     step_node: str,
     test: LoadedTest,
     scope: str,
+    node: str = "",
+    set_key: str = "",
     extra_resource_types: set[str] | None = None,
     namespace: str = "",
 ) -> None:
@@ -346,7 +402,12 @@ def add_teardown_steps(
                     "selector": selector,
                     "resource_types": resource_types,
                 },
-                resource_name=f"{res_prefix}-teardown",
+                resource_name=build_resource_name(
+                    test_id=test.test_id,
+                    resource_type="tdn",
+                    node=node,
+                    set_key=set_key,
+                ),
                 node=step_node,
                 test=test.name,
                 test_id=test.test_id,
@@ -367,7 +428,12 @@ def add_teardown_steps(
                 "selector": selector,
                 "resource_types": resource_types,
             },
-            resource_name=f"{res_prefix}-finally-teardown",
+            resource_name=build_resource_name(
+                test_id=test.test_id,
+                resource_type="ftd",
+                node=node,
+                set_key=set_key,
+            ),
             node=step_node,
             test=test.name,
             test_id=test.test_id,
@@ -386,7 +452,6 @@ def _build_render_ctx(
     test: LoadedTest,
     services: dict,
     node_spec_dict: dict | None = None,
-    res_prefix: str = "",
     namespace: str = "",
 ) -> dict[str, Any]:
     ctx: dict[str, Any] = {
@@ -394,22 +459,33 @@ def _build_render_ctx(
         "node": node,
         "serverConfig": test.spec.server_config,
         "services": services,
-        "k8sNamePrefix": res_prefix,
         "namespace": namespace,
     }
     if node_spec_dict is not None:
         ctx["nodeSpec"] = node_spec_dict
+    if "_resource_name" in services:
+        ctx["resource_name"] = services["_resource_name"]
     return ctx
 
 
 def _register_service(
     dag_step: DAGStep,
-    res_prefix: str,
+    test: LoadedTest,
     services: dict,
+    node: str = "",
+    set_key: str = "",
+    sweep: str = "",
 ) -> str:
     if not dag_step.service.enabled:
         return ""
-    svc_name = f"svc-{res_prefix}-{dag_step.service.name}"
+    svc_name = build_resource_name(
+        test_id=test.test_id,
+        resource_type="svc",
+        step=dag_step.service.name,
+        node=node,
+        set_key=set_key,
+        sweep=sweep,
+    )
     services[dag_step.service.name] = {
         "url": f"http://{svc_name}:{dag_step.service.port}",
         "name": svc_name,
@@ -466,7 +542,6 @@ def add_resource_steps(
     steps: list[Step],
     dag_step: DAGStep,
     step_prefix: str,
-    res_prefix: str,
     node: str,
     step_node: str,
     test: LoadedTest,
@@ -476,18 +551,25 @@ def add_resource_steps(
     jinja_env: Environment,
     scope: str,
     node_spec_dict: dict | None = None,
-    chain: str = "",
+    set_key: str = "",
 ) -> None:
     rc = dag_step.resource_config
     step_name = f"{step_prefix}-{dag_step.name}"
-    resource_name = f"{res_prefix}-{dag_step.name}"
+    resource_name = build_resource_name(
+        test_id=test.test_id,
+        resource_type="crd",
+        step=dag_step.name,
+        node=node,
+        set_key=set_key,
+    )
+
+    services["_resource_name"] = resource_name
 
     render_ctx = _build_render_ctx(
         node,
         test,
         services,
         node_spec_dict,
-        res_prefix=res_prefix,
         namespace=namespace,
     )
     rendered_spec = _render_nested_strings(rc.spec, render_ctx, jinja_env)
@@ -498,12 +580,13 @@ def add_resource_steps(
         "resource_name": resource_name,
         "namespace": namespace,
         "managed_by_label": tc.managed_by_label,
-        "test": test.name,
+        "test_label": fit(test.name, 63),
         "node": node,
+        "node_label": fit(node, 10) if node else "",
         "spec": rendered_spec,
     }
-    if chain:
-        tmpl_ctx["chain"] = chain
+    if set_key:
+        tmpl_ctx["chain_label"] = fit(set_key, 4)
 
     content = render_manifest(jinja_env, "resource.yaml.j2", tmpl_ctx)
 
@@ -548,7 +631,6 @@ def add_persistent_steps(
     steps: list[Step],
     dag_step: DAGStep,
     step_prefix: str,
-    res_prefix: str,
     node: str,
     step_node: str,
     test: LoadedTest,
@@ -560,18 +642,23 @@ def add_persistent_steps(
     jinja_env: Environment,
     scope: str,
     node_spec_dict: dict | None = None,
-    chain: str = "",
+    set_key: str = "",
     models_storage: "ModelsStorageConfig | None" = None,
 ) -> None:
     step_name = f"{step_prefix}-{dag_step.name}"
-    pod_name = f"{res_prefix}-{dag_step.name}"
+    pod_name = build_resource_name(
+        test_id=test.test_id,
+        resource_type="pod",
+        step=dag_step.name,
+        node=node,
+        set_key=set_key,
+    )
 
     render_ctx = _build_render_ctx(
         node,
         test,
         services,
         node_spec_dict,
-        res_prefix=res_prefix,
         namespace=namespace,
     )
 
@@ -588,7 +675,13 @@ def add_persistent_steps(
         else None
     )
 
-    svc_name = _register_service(dag_step, res_prefix, services)
+    svc_name = _register_service(
+        dag_step,
+        test,
+        services,
+        node=node,
+        set_key=set_key,
+    )
 
     workspace_subpath = f"{base_path}/__TIMESTAMP__/{step_name}"
     binaries_subpath = f"{base_path}/__TIMESTAMP__/binaries"
@@ -611,13 +704,19 @@ def add_persistent_steps(
         ]
         rendered_sidecars.append(sc_dict)
 
+    node_label = fit(node, 10) if node else ""
+    test_label = fit(test.name, 63)
+    dag_step_label = fit(dag_step.name, 16)
+    chain_label = fit(set_key, 4) if set_key else ""
+
     pod_ctx: dict[str, Any] = {
         "pod_name": pod_name,
         "namespace": namespace,
         "managed_by_label": tc.managed_by_label,
-        "test": test.name,
+        "test_label": test_label,
         "node": node,
-        "dag_step_name": dag_step.name,
+        "node_label": node_label,
+        "dag_step_label": dag_step_label,
         "node_selector_key": tc.node_selector_key,
         "image": dag_step.image,
         "command": command,
@@ -636,8 +735,8 @@ def add_persistent_steps(
         "sidecars": rendered_sidecars,
         "service_account_name": dag_step.service_account_name,
     }
-    if chain:
-        pod_ctx["chain"] = chain
+    if chain_label:
+        pod_ctx["chain_label"] = chain_label
     content = render_manifest(jinja_env, "dag-pod.yaml.j2", pod_ctx)
 
     if dag_step.service.enabled:
@@ -647,13 +746,14 @@ def add_persistent_steps(
             "port": dag_step.service.port,
             "namespace": namespace,
             "node": node,
-            "test": test.name,
-            "dag_step_name": dag_step.name,
+            "node_label": node_label,
+            "test_label": test_label,
+            "dag_step_label": dag_step_label,
             "managed_by_label": tc.managed_by_label,
             "headless": dag_step.service.headless,
         }
-        if chain:
-            svc_ctx["chain"] = chain
+        if chain_label:
+            svc_ctx["chain_label"] = chain_label
         svc_content = render_manifest(jinja_env, "dag-service.yaml.j2", svc_ctx)
         content = content + "\n---\n" + svc_content
 
@@ -704,7 +804,6 @@ def add_ephemeral_steps(
     steps: list[Step],
     dag_step: DAGStep,
     step_prefix: str,
-    res_prefix: str,
     node: str,
     step_node: str,
     test: LoadedTest,
@@ -717,13 +816,19 @@ def add_ephemeral_steps(
     scope: str,
     selector_extra: str = "",
     node_spec_dict: dict | None = None,
-    chain: str = "",
+    set_key: str = "",
     models_storage: "ModelsStorageConfig | None" = None,
 ) -> None:
     has_sweep = dag_step.parameter_sweep is not None
 
     if not has_sweep:
-        svc_name = _register_service(dag_step, res_prefix, services)
+        svc_name = _register_service(
+            dag_step,
+            test,
+            services,
+            node=node,
+            set_key=set_key,
+        )
 
     if has_sweep:
         entries = [
@@ -740,16 +845,48 @@ def add_ephemeral_steps(
     for sweep_id, _sweep_desc, sweep_flags in entries:
         if has_sweep:
             step_name = f"{step_prefix}-{dag_step.name}-{sweep_id}"
-            res_name = f"{res_prefix}-{dag_step.name}-{sweep_id}"
+            res_name = build_resource_name(
+                test_id=test.test_id,
+                resource_type="pod",
+                step=dag_step.name,
+                node=node,
+                set_key=set_key,
+                sweep=sweep_id,
+            )
             cleanup_name = f"{step_prefix}-cleanup-{dag_step.name}-{sweep_id}"
-            cleanup_res = f"{res_prefix}-cleanup-{dag_step.name}-{sweep_id}"
-            sweep_res_prefix = f"{res_prefix}-{sweep_id}"
-            svc_name = _register_service(dag_step, sweep_res_prefix, services)
+            cleanup_res = build_resource_name(
+                test_id=test.test_id,
+                resource_type="cln",
+                step=dag_step.name,
+                node=node,
+                set_key=set_key,
+                sweep=sweep_id,
+            )
+            svc_name = _register_service(
+                dag_step,
+                test,
+                services,
+                node=node,
+                set_key=set_key,
+                sweep=sweep_id,
+            )
         else:
             step_name = f"{step_prefix}-{dag_step.name}"
-            res_name = f"{res_prefix}-{dag_step.name}"
+            res_name = build_resource_name(
+                test_id=test.test_id,
+                resource_type="pod",
+                step=dag_step.name,
+                node=node,
+                set_key=set_key,
+            )
             cleanup_name = f"{step_prefix}-cleanup-{dag_step.name}"
-            cleanup_res = f"{res_prefix}-cleanup-{dag_step.name}"
+            cleanup_res = build_resource_name(
+                test_id=test.test_id,
+                resource_type="cln",
+                step=dag_step.name,
+                node=node,
+                set_key=set_key,
+            )
 
         pod_name = res_name
         param_sweep: dict[str, Any] = {"id": sweep_id}
@@ -761,7 +898,6 @@ def add_ephemeral_steps(
             test,
             services,
             node_spec_dict,
-            res_prefix=res_prefix,
             namespace=namespace,
         )
 
@@ -829,14 +965,21 @@ def add_ephemeral_steps(
             ]
             rendered_sidecars.append(sc_dict)
 
+        node_label = fit(node, 10) if node else ""
+        test_label = fit(test.name, 63)
+        dag_step_label = fit(dag_step.name, 16)
+        sweep_label = fit(sweep_id, 8)
+        chain_label = fit(set_key, 4) if set_key else ""
+
         pod_ctx: dict[str, Any] = {
             "pod_name": pod_name,
             "namespace": namespace,
             "managed_by_label": tc.managed_by_label,
-            "test": test.name,
+            "test_label": test_label,
             "node": node,
-            "sweep_id": sweep_id,
-            "dag_step_name": dag_step.name,
+            "node_label": node_label,
+            "sweep_label": sweep_label,
+            "dag_step_label": dag_step_label,
             "node_selector_key": tc.node_selector_key,
             "image": dag_step.image,
             "command": pod_command,
@@ -854,8 +997,8 @@ def add_ephemeral_steps(
             "sidecars": rendered_sidecars,
             "service_account_name": dag_step.service_account_name,
         }
-        if chain:
-            pod_ctx["chain"] = chain
+        if chain_label:
+            pod_ctx["chain_label"] = chain_label
         content = render_manifest(jinja_env, "test-pod.yaml.j2", pod_ctx)
 
         if dag_step.service.enabled:
@@ -865,14 +1008,15 @@ def add_ephemeral_steps(
                 "port": dag_step.service.port,
                 "namespace": namespace,
                 "node": node,
-                "test": test.name,
-                "dag_step_name": dag_step.name,
+                "node_label": node_label,
+                "test_label": test_label,
+                "dag_step_label": dag_step_label,
                 "managed_by_label": tc.managed_by_label,
                 "headless": dag_step.service.headless,
-                "sweep_id": sweep_id,
+                "sweep_label": sweep_label,
             }
-            if chain:
-                svc_ctx["chain"] = chain
+            if chain_label:
+                svc_ctx["chain_label"] = chain_label
             svc_content = render_manifest(jinja_env, "dag-service.yaml.j2", svc_ctx)
             content = content + "\n---\n" + svc_content
 
@@ -917,7 +1061,7 @@ def add_ephemeral_steps(
                 namespace=namespace,
             )
         )
-        selector = f"test={test.name}{selector_extra},sweep={sweep_id}"
+        selector = f"test={test_label}{selector_extra},sweep={sweep_label}"
         steps.append(
             Step(
                 name=cleanup_name,

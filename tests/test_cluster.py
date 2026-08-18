@@ -114,8 +114,8 @@ class TestComputeClusterSteps:
             _test(placement=placement), tc, "ns", "pvc", "results", env, nodes=nodes
         )
         names = [s.name for s in steps]
-        assert "t1-t-set0-run" in names
-        assert "t1-t-set1-run" in names
+        assert "t1-t-0000-run" in names
+        assert "t1-t-0001-run" in names
         assert len(mappings) == 2
 
     def test_set_size_validation(self, env, tc):
@@ -242,8 +242,8 @@ class TestComputeClusterSteps:
             _test(placement=placement), tc, "ns", "pvc", "results", env, nodes=nodes
         )
         chain_keys = {s.node for s in steps}
-        assert "set0" in chain_keys
-        assert "set1" in chain_keys
+        assert "0000" in chain_keys
+        assert "0001" in chain_keys
 
     def test_chain_key_single_set(self, env, tc):
         nodes = [_node("wrk-1")]
