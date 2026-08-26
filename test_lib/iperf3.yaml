@@ -15,7 +15,7 @@ spec:
 
   dag:
     - name: iperf-server
-      image: networkstatic/iperf3:latest
+      image: docker.io/networkstatic/iperf3:latest
       command:
         args:
           - iperf3
@@ -37,7 +37,7 @@ spec:
       persistsThroughSweep: true
 
     - name: iperf-client
-      image: networkstatic/iperf3:latest
+      image: docker.io/networkstatic/iperf3:latest
       labelFilter: pass-fail
       env:
         - name: SERVER_HOST

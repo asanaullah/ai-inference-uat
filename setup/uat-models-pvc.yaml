@@ -7,7 +7,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteMany
-  storageClassName: nfs-csi
+  storageClassName: pure-fb-nfsv4
   resources:
     requests:
       storage: 500Gi
@@ -20,7 +20,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteMany
-  storageClassName: nfs-csi
+  storageClassName: pure-fb-nfsv4
   resources:
     requests:
       storage: 500Gi
