@@ -26,12 +26,10 @@ spec:
   nodeSelector:
     {{ node_selector_key }}: {{ node }}
 {% endif %}
-{% if resources and (resources.get('limits', {}).get('nvidia.com/gpu') or resources.get('requests', {}).get('nvidia.com/gpu')) %}
   tolerations:
     - key: nvidia.com/gpu.product
       operator: Exists
       effect: NoSchedule
-{% endif %}
 {% if privileged %}
   hostPID: true
 {% endif %}
