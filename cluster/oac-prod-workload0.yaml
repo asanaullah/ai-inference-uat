@@ -1,0 +1,123 @@
+# Assisted by Claude Opus 4.8
+#
+# Cluster: oac-prod-workload0 (api-external-oac-prod-workload0.hcp.oac.massopen.cloud)
+# GPU nodes: moc-r4pcc02u30, moc-r4pcc04u09, moc-r4pcc04u11 (3x 4-GPU H100 SXM)
+#
+# All values were read directly from this cluster, per node independently: node
+# labels, host sysfs (oc debug node), and nvidia-smi via each node's
+# nvidia-driver-daemonset pod. All three nodes measured identical. GPU nodes
+# are the NVIDIA-H100-80GB-HBM3 / ThinkSystem-SD665-N-V3 SKU on kernel
+# 5.14.0-570.78.1.el9_6 with driver 595.91.07 (CUDA runtime 13.2).
+# nvlinkP2pBandwidth is derived from the NV6 link count (not benchmarked);
+# pcieWidth/pcieGen are from PCI feature labels.
+apiVersion: uat.openshift.io/v1
+kind: ClusterTest
+metadata:
+  name: oac-prod-workload0-uat
+spec:
+  compliance:
+    fipsEnabled: false
+
+  nodes:
+    - name: moc-r4pcc02u30
+      componentValidation:
+        sanity:
+          nvidia.com/gpu: 4
+          nvidia.com/gpu.memory: 81559
+          cpu: 512
+          resourceNames:
+            nvidia.com/gpu: NVIDIA-H100-80GB-HBM3
+            cpu: AMD EPYC 9754 128-Core Processor
+          nvlink: NV6                  # [observed] nvidia-smi topo -m
+          nvlinkTopology: all-to-all   # [observed] every GPU pair NV6
+          nvlinkP2pBandwidth: 150      # [derived] NV6 x 25 GB/s/link (NVLink4)
+          pcieWidth: 16                # [label]
+          pcieGen: 5                   # [label]
+          memory: 1512Gi
+          numaNodes: 2
+        ideal:
+          cudaDriverVersion: "595.91.07"   # [observed] driver ver (CUDA runtime 13.2)
+          gpuPowerLimit: 700               # [observed] 700.00 W
+          gpuPersistenceMode: true         # [observed] persistence Enabled
+          kernel: 5.14.0-570.78.1.el9_6.x86_64
+          hugepages: 8000Mi
+          cpuFreqGovernor: performance
+          cpuIdleDriver: acpi_idle
+          cpuIdleGovernor: menu
+          # AMD acpi_idle C2 is equivalent to Intel C1E (low single-digit us wake-up)
+          cpuCStatesEnabled: [POLL, C1, C2]
+          transparentHugepages: madvise
+
+    - name: moc-r4pcc04u09
+      componentValidation:
+        sanity:
+          nvidia.com/gpu: 4
+          nvidia.com/gpu.memory: 81559
+          cpu: 512
+          resourceNames:
+            nvidia.com/gpu: NVIDIA-H100-80GB-HBM3
+            cpu: AMD EPYC 9754 128-Core Processor
+          nvlink: NV6                  # [observed] nvidia-smi topo -m
+          nvlinkTopology: all-to-all   # [observed] every GPU pair NV6
+          nvlinkP2pBandwidth: 150      # [derived] NV6 x 25 GB/s/link (NVLink4)
+          pcieWidth: 16                # [label]
+          pcieGen: 5                   # [label]
+          memory: 1512Gi
+          numaNodes: 2
+        ideal:
+          cudaDriverVersion: "595.91.07"   # [observed] driver ver (CUDA runtime 13.2)
+          gpuPowerLimit: 700               # [observed] 700.00 W
+          gpuPersistenceMode: true         # [observed] persistence Enabled
+          kernel: 5.14.0-570.78.1.el9_6.x86_64
+          hugepages: 8000Mi
+          cpuFreqGovernor: performance
+          cpuIdleDriver: acpi_idle
+          cpuIdleGovernor: menu
+          # AMD acpi_idle C2 is equivalent to Intel C1E (low single-digit us wake-up)
+          cpuCStatesEnabled: [POLL, C1, C2]
+          transparentHugepages: madvise
+
+    - name: moc-r4pcc04u11
+      componentValidation:
+        sanity:
+          nvidia.com/gpu: 4
+          nvidia.com/gpu.memory: 81559
+          cpu: 512
+          resourceNames:
+            nvidia.com/gpu: NVIDIA-H100-80GB-HBM3
+            cpu: AMD EPYC 9754 128-Core Processor
+          nvlink: NV6                  # [observed] nvidia-smi topo -m
+          nvlinkTopology: all-to-all   # [observed] every GPU pair NV6
+          nvlinkP2pBandwidth: 150      # [derived] NV6 x 25 GB/s/link (NVLink4)
+          pcieWidth: 16                # [label]
+          pcieGen: 5                   # [label]
+          memory: 1512Gi
+          numaNodes: 2
+        ideal:
+          cudaDriverVersion: "595.91.07"   # [observed] driver ver (CUDA runtime 13.2)
+          gpuPowerLimit: 700               # [observed] 700.00 W
+          gpuPersistenceMode: true         # [observed] persistence Enabled
+          kernel: 5.14.0-570.78.1.el9_6.x86_64
+          hugepages: 8000Mi
+          cpuFreqGovernor: performance
+          cpuIdleDriver: acpi_idle
+          cpuIdleGovernor: menu
+          # AMD acpi_idle C2 is equivalent to Intel C1E (low single-digit us wake-up)
+          cpuCStatesEnabled: [POLL, C1, C2]
+          transparentHugepages: madvise
+
+
+  namespace: uat-project
+  peerNamespace: uat-peer
+
+  storage:
+    pvc: uat-project-storage
+    basePath: uat/results
+    models:
+      pvc: uat-models
+
+  peerStorage:
+    pvc: uat-peer-storage
+    basePath: uat/results
+    models:
+      pvc: uat-models

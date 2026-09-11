@@ -7,6 +7,8 @@ export GOCACHE=/tmp/go-cache
 export GOPATH=/tmp/gopath
 export CGO_ENABLED=0
 export PATH="$PATH:$GOPATH/bin"
+export GOMAXPROCS=8
+export GOFLAGS="-p=8"
 
 cp /src/cluster.yaml /uat_workspace/cluster.yaml
 echo "Copied cluster.yaml to workspace"

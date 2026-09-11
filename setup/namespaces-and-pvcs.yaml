@@ -4,16 +4,22 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: uat-project
+  labels:
+    massopen.cloud/project: "true"
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: uat-peer
+  labels:
+    massopen.cloud/project: "true"
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: uat-admin
+  labels:
+    massopen.cloud/project: "true"
 ---
 # ---- PVCs ----
 apiVersion: v1
@@ -104,7 +110,7 @@ metadata:
   namespace: uat-project
 subjects:
   - kind: User
-    name: asanaullah
+    name: asanaull@redhat.com
     apiGroup: rbac.authorization.k8s.io
 roleRef:
   kind: Role
@@ -138,7 +144,7 @@ metadata:
   namespace: uat-peer
 subjects:
   - kind: User
-    name: asanaullah
+    name: asanaull@redhat.com
     apiGroup: rbac.authorization.k8s.io
 roleRef:
   kind: Role
@@ -192,7 +198,7 @@ metadata:
   namespace: uat-admin
 subjects:
   - kind: User
-    name: asanaullah
+    name: asanaull@redhat.com
     apiGroup: rbac.authorization.k8s.io
 roleRef:
   kind: Role

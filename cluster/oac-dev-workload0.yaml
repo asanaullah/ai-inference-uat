@@ -2,7 +2,7 @@
 apiVersion: uat.openshift.io/v1
 kind: ClusterTest
 metadata:
-  name: oac-prod-uat
+  name: oac-dev-workload0-uat
 spec:
   compliance:
     fipsEnabled: false

@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .ruff_cache/
 .pytest_cache/
+.coverage
 .claude/
 cluster/*.local.yaml
 temp/
