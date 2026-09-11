@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 """Cluster-level step computation, placement resolution, and resource validation."""
 
 import itertools

@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 """Pydantic schemas and dataclasses for the UAT test harness."""
 
 from dataclasses import dataclass, field

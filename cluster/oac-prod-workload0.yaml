@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.8
+# Assisted by Claude Opus
 #
 # Cluster: oac-prod-workload0 (api-external-oac-prod-workload0.hcp.oac.massopen.cloud)
 # GPU nodes: moc-r4pcc02u30, moc-r4pcc04u09, moc-r4pcc04u11 (3x 4-GPU H100 SXM)

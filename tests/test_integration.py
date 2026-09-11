@@ -1,3 +1,4 @@
+# Assisted by Claude Opus
 """End-to-end integration tests using examples/all_tests.yaml and test_lib."""
 
 import json

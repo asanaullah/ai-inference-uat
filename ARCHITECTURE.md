@@ -1,4 +1,4 @@
-<!-- Assisted by Claude Opus 4.6 -->
+<!-- Assisted by Claude Opus -->
 # UAT Test Harness — Architecture
 
 ## Overview

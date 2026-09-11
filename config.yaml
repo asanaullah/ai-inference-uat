@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 oseCLIImage: registry.redhat.io/openshift4/ose-cli:latest
 builderImage: golang:1.26
 ginkgoVersion: v2.32.0

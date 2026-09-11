@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 """Setup/teardown step computation, step validation, and step I/O."""
 
 import json

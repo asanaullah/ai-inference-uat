@@ -1,4 +1,4 @@
-<!-- Assisted by Claude Opus 4.6 -->
+<!-- Assisted by Claude Opus -->
 # AI Inference UAT Harness
 A declarative test harness that generates Kubernetes manifests from test definitions. Given a cluster configuration (target nodes, namespace, and storage) and a test suite, the generator produces both manually-executable manifests, as well as Tekton pipeline manifests for automated execution on OpenShift.
 

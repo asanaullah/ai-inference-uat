@@ -1,5 +1,5 @@
 #!/bin/bash
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 set -e
 echo "Cleaning up all UAT resources..."
 oc delete pods -l app.kubernetes.io/managed-by={{ managed_by_label }} --ignore-not-found -n {{ namespace }}

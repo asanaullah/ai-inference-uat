@@ -1,3 +1,4 @@
+# Assisted by Claude Opus
 """Integration tests for peer namespace override on DAG steps."""
 
 import pytest

@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 """Node-level step computation, DAG/test pod rendering, and requirement checks."""
 
 from typing import Any

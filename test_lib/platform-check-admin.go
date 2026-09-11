@@ -1,3 +1,4 @@
+// Assisted by Claude Opus
 package test
 
 import (

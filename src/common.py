@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 """Jinja2 engine, manifest validation, config loading, and shared utilities."""
 
 import hashlib

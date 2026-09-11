@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 """CLI entry point and orchestration."""
 
 import argparse

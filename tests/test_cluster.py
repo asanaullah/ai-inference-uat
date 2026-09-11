@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 import pytest
 
 from src.cluster import _filter_nodes, compute_cluster_steps

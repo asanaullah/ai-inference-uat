@@ -1,4 +1,4 @@
-<!-- Assisted by Claude Opus 4.6 -->
+<!-- Assisted by Claude Opus -->
 # UAT Test Harness — Implementation
 
 This document describes how [ARCHITECTURE.md](ARCHITECTURE.md) is implemented. It is intended as a review reference — detailed enough to verify correctness without reading all source files.

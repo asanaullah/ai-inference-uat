@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 """Manual-run writer: numbered shell scripts and YAML manifests."""
 
 import shutil

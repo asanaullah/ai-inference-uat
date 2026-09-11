@@ -48,14 +48,12 @@
 
 1. All test source is delivered via a single ConfigMap, which has a 1MB Kubernetes limit. The current test library fits comfortably, but a significantly larger one would hit it. The mitigation is splitting across multiple suites or revisiting the delivery mechanism.
 
-2. Resource names are built by concatenating test ID, test name, node or set index, and DAG step. Node names are capped at 16 characters, but the full name can still exceed the 63-character Kubernetes limit with long test or step names.
+2. The builder pod has a fixed name, so only one pipeline can run at a time in a given namespace.
 
-3. The builder pod has a fixed name, so only one pipeline can run at a time in a given namespace.
+3. Parameter sweep entries run sequentially, not in parallel. Each entry gets its own pod against the same persistent server.
 
-4. Parameter sweep entries run sequentially, not in parallel. Each entry gets its own pod against the same persistent server.
+4. Cluster-scoped tests with permutation placement can produce factorial numbers of node sets. 10 nodes with setSize 3 produces 720 permutations. setCutoff and combination mode exist to bound this.
 
-5. Cluster-scoped tests with permutation placement can produce factorial numbers of node sets. 10 nodes with setSize 3 produces 720 permutations. setCutoff and combination mode exist to bound this.
+5. Resource steps deploy arbitrary CRDs but can't inject nodeSelector because the path to nodeSelector differs by resource kind. The KServe test is restricted to project scope because of this.
 
-6. Resource steps deploy arbitrary CRDs but can't inject nodeSelector because the path to nodeSelector differs by resource kind. The KServe test is restricted to project scope because of this.
-
-7. Tekton execution is generated but not yet tested end to end.
+6. Tekton execution is generated but not yet tested end to end.

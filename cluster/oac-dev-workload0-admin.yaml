@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.8
+# Assisted by Claude Opus
 apiVersion: uat.openshift.io/v1
 kind: ClusterTest
 metadata:

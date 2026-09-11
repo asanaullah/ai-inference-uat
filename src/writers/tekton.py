@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 """Tekton pipeline writer: Tasks, Pipeline, and PipelineRun manifests."""
 
 import shutil

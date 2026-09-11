@@ -1,3 +1,4 @@
+# Assisted by Claude Opus
 apiVersion: uat.openshift.io/v1
 kind: Test
 metadata:

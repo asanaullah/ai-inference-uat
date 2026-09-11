@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 """Project-level step computation (single chain, no node affinity)."""
 
 from typing import Any

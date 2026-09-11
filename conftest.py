@@ -1,3 +1,4 @@
+# Assisted by Claude Opus
 import sys
 from pathlib import Path
 

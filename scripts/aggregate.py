@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 """Aggregate JUnit XML results into a summary JSON report."""
 
 import json

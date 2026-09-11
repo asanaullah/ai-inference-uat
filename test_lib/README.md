@@ -1,3 +1,4 @@
+<!-- Assisted by Claude Opus -->
 # Test Library
 
 This directory contains the test definitions used to validate AI inference platforms on OpenShift. Each test consists of a YAML definition that the UAT framework consumes and a Ginkgo test file that gets compiled into a binary and run inside a pod. A separate test suite YAML file controls which tests run, in what order, and what happens when one fails.
