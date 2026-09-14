@@ -8,7 +8,7 @@ metadata:
     Validate operator deployment health, CR status, DSC component conditions,
     GPU node labels, and required pods across namespaces using admin SA
   supportedScopes:
-    - cluster
+    - project
 spec:
   source:
     ginkgo: platform-check-admin.go

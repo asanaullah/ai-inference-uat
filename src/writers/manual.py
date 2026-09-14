@@ -154,9 +154,7 @@ def _derive_manual_script(
             "teardown-script.sh.j2",
             {
                 "selector": config["selector"],
-                "resource_types": config.get(
-                    "resource_types", "pods,services,deployments"
-                ),
+                "resource_types": config.get("resource_types", "pods,services"),
                 "namespace": namespace,
             },
         )

@@ -371,7 +371,7 @@ def build_resource_name(
     return f"ua-{tid}-{resource_type}-{stp}-{nod}-{sk}-{swp}-t"
 
 
-_DEFAULT_RESOURCE_TYPES = "pods,services,deployments"
+_DEFAULT_RESOURCE_TYPES = "pods,services"
 
 
 def add_teardown_steps(
@@ -577,6 +577,7 @@ def add_resource_steps(
     tmpl_ctx: dict[str, Any] = {
         "api_version": rc.api_version,
         "kind": rc.kind,
+        "annotations": _render_nested_strings(rc.annotations, render_ctx, jinja_env),
         "resource_name": resource_name,
         "namespace": namespace,
         "managed_by_label": tc.managed_by_label,

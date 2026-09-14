@@ -343,7 +343,6 @@ def _build_teardown_script(
                 'echo "Cleaning up all UAT resources..."',
                 f"oc delete pods -l {sel} --ignore-not-found -n {ns}",
                 f"oc delete services -l {sel} --ignore-not-found -n {ns}",
-                f"oc delete deployments -l {sel} --ignore-not-found -n {ns}",
                 f"oc delete configmap {configmap} --ignore-not-found -n {ns}",
                 'echo "Cleanup complete"',
             ]
@@ -471,9 +470,7 @@ def _render_tekton_task(
             {
                 **base_ctx,
                 "selector": config["selector"],
-                "resource_types": config.get(
-                    "resource_types", "pods,services,deployments"
-                ),
+                "resource_types": config.get("resource_types", "pods,services"),
             },
         )
 

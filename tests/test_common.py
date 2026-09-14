@@ -1658,7 +1658,7 @@ class TestTeardownResourceTypes:
             scope="project",
         )
         for s in steps:
-            assert s.config["resource_types"] == "pods,services,deployments"
+            assert s.config["resource_types"] == "pods,services"
 
     def test_extra_resource_types_appended(self):
         steps = []
@@ -1673,10 +1673,7 @@ class TestTeardownResourceTypes:
             extra_resource_types={"InferencePool", "ConfigMap"},
         )
         for s in steps:
-            assert (
-                s.config["resource_types"]
-                == "pods,services,deployments,ConfigMap,InferencePool"
-            )
+            assert s.config["resource_types"] == "pods,services,ConfigMap,InferencePool"
 
 
 # -- load_config scope validation ---------------------------------------------

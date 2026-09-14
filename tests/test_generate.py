@@ -116,8 +116,7 @@ class TestDeriveManualScript:
         )
         script = _derive_manual_script(step, env, "test-ns")
         assert (
-            "oc delete pods,services,deployments -l app=x --ignore-not-found -n test-ns"
-            in script
+            "oc delete pods,services -l app=x --ignore-not-found -n test-ns" in script
         )
 
     def test_delete_all(self, env):

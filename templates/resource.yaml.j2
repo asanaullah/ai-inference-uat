@@ -13,5 +13,11 @@ metadata:
 {% if chain_label is defined and chain_label %}
     chain: {{ chain_label | yaml_quote }}
 {% endif %}
+{% if annotations is defined and annotations %}
+  annotations:
+{% for k, v in annotations.items() %}
+    {{ k }}: {{ v | yaml_quote }}
+{% endfor %}
+{% endif %}
 spec:
 {{ spec | to_yaml | indent(2, first=True) }}

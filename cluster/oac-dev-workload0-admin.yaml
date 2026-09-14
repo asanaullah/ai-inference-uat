@@ -72,5 +72,3 @@ spec:
   storage:
     pvc: uat-admin-storage
     basePath: uat/results
-    models:
-      pvc: uat-models
