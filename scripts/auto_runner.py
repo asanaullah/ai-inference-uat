@@ -96,6 +96,12 @@ _KEEP_CONFIGMAPS = {
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
+# manual_runner groups every lifecycle item ahead of the tests for its
+# interactive picker, but an unattended run needs true execution order:
+# set up, run the tests, then tear down. These lifecycle ids run after the
+# tests; every other lifecycle id runs before them.
+_POST_TEST_LIFECYCLE = ("aggregate", "cleanup")
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -136,7 +142,7 @@ class AutoRunner:
                 self.preflight_summary["error"] = trace
 
         all_ok = True
-        for item in self.build.items:
+        for item in self._ordered_items():
             ok, aborted = self._run_item(item)
             all_ok = all_ok and ok
             # A lifecycle step (configmap/build/aggregate) has no failure policy;
@@ -149,6 +155,20 @@ class AutoRunner:
                 break
         self._write_status(all_ok)
         return all_ok
+
+    def _ordered_items(self) -> list[Item]:
+        """Items in execution order: setup lifecycle, then tests, then teardown
+        lifecycle. manual_runner lists all lifecycle items first (for its picker),
+        which would otherwise run aggregate/cleanup before any test."""
+        tests = [i for i in self.build.items if i.kind == "test"]
+        post = [i for i in self.build.items if i.item_id in _POST_TEST_LIFECYCLE]
+        post_ids = set(_POST_TEST_LIFECYCLE)
+        pre = [
+            i
+            for i in self.build.items
+            if i.kind != "test" and i.item_id not in post_ids
+        ]
+        return pre + tests + post
 
     # -- preflight cleanup -------------------------------------------------
 
