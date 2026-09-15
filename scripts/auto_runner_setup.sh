@@ -43,8 +43,12 @@ cp "${UAT_BIN}/oc" "${META_DIR}/oc"
 oc version --client > "${META_DIR}/oc-version.txt" 2>&1 || true
 
 echo "=== installing dependencies ==="
-python3 -m pip install --user --quiet -r requirements.txt
-python3 -m pip install --user --quiet kubernetes
+# The ubi9/python-311 image runs inside a venv (/opt/app-root), so `pip install
+# --user` is rejected ("user site-packages not visible in this virtualenv").
+# Install into the venv, whose site-packages is group-writable for the arbitrary
+# non-root uid this pod runs as.
+python3 -m pip install --quiet -r requirements.txt
+python3 -m pip install --quiet kubernetes
 
 echo "=== build ==="
 # Produces build/steps.json + build/manual/*.sh under ${REPO_DIR}.

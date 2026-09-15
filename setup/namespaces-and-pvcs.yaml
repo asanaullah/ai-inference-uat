@@ -326,6 +326,37 @@ roleRef:
   name: uat-runner-role
   apiGroup: rbac.authorization.k8s.io
 ---
+# ---- uat-runner operator Role (human launches/inspects the runner pod) ----
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: uat-runner-user-role
+  namespace: uat-runner
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: uat-runner-user-binding
+  namespace: uat-runner
+subjects:
+  - kind: User
+    name: asanaull@redhat.com
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: uat-runner-user-role
+  apiGroup: rbac.authorization.k8s.io
+---
 # ---- Bind uat-runner-sa to the test-user role in each target namespace ----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
