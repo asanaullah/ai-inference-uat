@@ -1,0 +1,24 @@
+# Assisted by Claude Opus
+# No-GPU suite: only tests that request no GPUs (platform-check, iperf3, ping),
+# for smoke-testing the uat-runner against a cluster without consuming GPUs.
+apiVersion: uat.openshift.io/v1
+kind: TestSuite
+metadata:
+  name: no-gpu-suite
+  version: v0.0.1
+spec:
+  tests:
+    - name: platform-check
+      scope: project
+      onFailure: continue
+    - name: iperf3
+      scope: cluster
+      onFailure: continue
+      placement:
+        setType: permutation
+        setSize: 2
+        setSelection: all
+        setCutoff: 0
+    - name: ping
+      scope: project
+      onFailure: continue

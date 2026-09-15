@@ -552,6 +552,8 @@ def add_resource_steps(
     scope: str,
     node_spec_dict: dict | None = None,
     set_key: str = "",
+    pvc: str = "",
+    base_path: str = "",
 ) -> None:
     rc = dag_step.resource_config
     step_name = f"{step_prefix}-{dag_step.name}"
@@ -572,6 +574,16 @@ def add_resource_steps(
         node_spec_dict,
         namespace=namespace,
     )
+    # Pod DAG steps auto-mount the shared scratchpad at /uat_scratchpad. A CRD step's pods
+    # are created by an operator from author-written YAML, so expose the workspace PVC +
+    # subPath (and the node selector) here and let the CRD spec mount it itself — the
+    # subPath carries the run timestamp and step_prefix the author can't hardcode.
+    render_ctx["scratchpad"] = {
+        "pvc": pvc,
+        "subPath": f"{base_path}/__TIMESTAMP__/scratchpad/{step_prefix}",
+        "mountPath": "/uat_scratchpad",
+    }
+    render_ctx["node_selector_key"] = tc.node_selector_key
     rendered_spec = _render_nested_strings(rc.spec, render_ctx, jinja_env)
 
     tmpl_ctx: dict[str, Any] = {
@@ -686,6 +698,10 @@ def add_persistent_steps(
 
     workspace_subpath = f"{base_path}/__TIMESTAMP__/{step_name}"
     binaries_subpath = f"{base_path}/__TIMESTAMP__/binaries"
+    # Shared across every step of this test instance (same step_prefix), unique per test /
+    # node / set. Lets one step (e.g. a fine-tune) hand artifacts to a later step (e.g. a
+    # persistent vLLM server) that has no other way to share data across the DAG.
+    scratchpad_subpath = f"{base_path}/__TIMESTAMP__/scratchpad/{step_prefix}"
 
     rendered_sidecars = []
     for sc in dag_step.sidecars:
@@ -731,6 +747,7 @@ def add_persistent_steps(
         "privileged": dag_step.privileged,
         "workspace_subpath": workspace_subpath,
         "binaries_subpath": binaries_subpath,
+        "scratchpad_subpath": scratchpad_subpath,
         "models_storage": models_storage,
         "extra_labels": dag_step.labels,
         "sidecars": rendered_sidecars,
@@ -893,6 +910,10 @@ def add_ephemeral_steps(
         param_sweep: dict[str, Any] = {"id": sweep_id}
         workspace_subpath = f"{base_path}/__TIMESTAMP__/{step_name}"
         binaries_subpath = f"{base_path}/__TIMESTAMP__/binaries"
+        # Shared across every step of this test instance (same step_prefix), unique per
+        # test / node / set — see add_persistent_steps. Sweep entries of one step share it
+        # too, since the key deliberately omits the sweep id.
+        scratchpad_subpath = f"{base_path}/__TIMESTAMP__/scratchpad/{step_prefix}"
 
         render_ctx = _build_render_ctx(
             node,
@@ -993,6 +1014,7 @@ def add_ephemeral_steps(
             "privileged": dag_step.privileged,
             "workspace_subpath": workspace_subpath,
             "binaries_subpath": binaries_subpath,
+            "scratchpad_subpath": scratchpad_subpath,
             "models_storage": models_storage,
             "extra_labels": dag_step.labels,
             "sidecars": rendered_sidecars,

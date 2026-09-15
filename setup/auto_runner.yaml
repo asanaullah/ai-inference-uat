@@ -1,0 +1,86 @@
+# Assisted by Claude Opus
+# uat-runner: clones the repo, runs the build, and drives the generated steps
+# step-by-step against the test namespaces. Requires the uat-runner namespace,
+# uat-runner-sa, and uat-runner-storage PVC from namespaces-and-pvcs.yaml.
+#
+# The pod is a thin bootstrap: it shallow-clones the repo to get the entrypoint
+# (scripts/auto_runner_setup.sh), then hands off. All run logic is versioned in
+# the repo; this manifest only supplies configuration via env.
+#
+# Admin (Category 2) tests stay manual — the runner SA holds no admin/cluster
+# rights, and the build below targets a non-admin cluster spec and suite.
+#
+# Run:    oc apply -f setup/auto_runner.yaml
+# Re-run: oc delete pod uat-runner -n uat-runner --ignore-not-found \
+#           && oc apply -f setup/auto_runner.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: uat-runner
+  namespace: uat-runner
+  labels:
+    app: uat-runner
+spec:
+  serviceAccountName: uat-runner-sa
+  restartPolicy: Never
+  # The runner image (ubi9/python-311) has python3, pip and git but no oc. The
+  # generated build/manual/*.sh scripts shell out to oc, so copy the oc binary
+  # out of the ose-cli image onto the uat-runner-bin PVC (works as a non-root
+  # uid, no dnf install needed); auto_runner_setup.sh prepends it to PATH.
+  initContainers:
+    - name: fetch-oc
+      image: registry.redhat.io/openshift4/ose-cli:latest
+      command: ["/bin/sh", "-c", "cp /usr/bin/oc /uat_bin/oc"]
+      volumeMounts:
+        - name: bin
+          mountPath: /uat_bin
+  containers:
+    - name: runner
+      image: registry.access.redhat.com/ubi9/python-311:latest
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -euo pipefail
+          boot="$(mktemp -d)"
+          git clone --depth 1 --branch "${REPO_REF}" "${REPO_URL}" "${boot}"
+          exec bash "${boot}/scripts/auto_runner_setup.sh"
+      env:
+        - name: REPO_URL
+          value: "https://github.com/asanaullah/ai-inference-uat.git"
+        - name: REPO_REF
+          value: "main"
+        # Build command producing build/steps.json + build/manual/*.sh. Runs
+        # from the cloned repo root. Keep the suite/cluster non-admin.
+        - name: BUILD_CMD
+          value: >-
+            python -m src
+            --test-suite examples/all_tests.yaml
+            --test-lib test_lib
+            --cluster cluster/oac-dev-workload0.yaml
+            --config config.yaml
+            --output build
+        - name: UAT_WORKSPACE
+          value: /uat_workspace
+        - name: UAT_BIN
+          value: /uat_bin
+      volumeMounts:
+        - name: workspace
+          mountPath: /uat_workspace
+        - name: bin
+          mountPath: /uat_bin
+      # Sized for many concurrent log/status streams (one follower per running
+      # pod, plus per-step shell capture) rather than raw compute.
+      resources:
+        requests:
+          cpu: "4"
+          memory: 2Gi
+        limits:
+          cpu: "4"
+          memory: 4Gi
+  volumes:
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: uat-runner-storage
+    - name: bin
+      persistentVolumeClaim:
+        claimName: uat-runner-bin

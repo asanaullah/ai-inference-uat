@@ -29,7 +29,7 @@ spec:
             tolerations:
               - key: nvidia.com/gpu.product
                 operator: Exists
-                effect: NoSchedule
+                effect: NoExecute
             containers:
               - name: kserve-container
                 image: '{{ serverConfig.image }}'
