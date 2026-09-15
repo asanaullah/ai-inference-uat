@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 """Tekton pipeline writer: Tasks, Pipeline, and PipelineRun manifests."""
 
 import shutil
@@ -6,7 +6,7 @@ from pathlib import Path
 
 from jinja2 import Environment
 
-from ..common import render_manifest
+from ..common import build_resource_name, render_manifest
 from ..models import ClusterTestSpec, Step, ToolConfig
 
 
@@ -123,7 +123,11 @@ def write_tekton(
                 chain_last[(test_id, chain_key)] = prev_step
 
         # Generate guard task for this test
-        guard_name = f"guard-{test_id}-{test_name}"
+        guard_name = build_resource_name(
+            test_id=test_id,
+            resource_type="grd",
+            step=test_name,
+        )
         guard_on_error = (
             "continue" if test_on_failure in ("continue", "skipTest") else "stopAndFail"
         )
@@ -339,7 +343,6 @@ def _build_teardown_script(
                 'echo "Cleaning up all UAT resources..."',
                 f"oc delete pods -l {sel} --ignore-not-found -n {ns}",
                 f"oc delete services -l {sel} --ignore-not-found -n {ns}",
-                f"oc delete deployments -l {sel} --ignore-not-found -n {ns}",
                 f"oc delete configmap {configmap} --ignore-not-found -n {ns}",
                 'echo "Cleanup complete"',
             ]
@@ -357,7 +360,7 @@ def _extract_test_order(
         if step.test_id and step.test_id not in seen:
             seen.add(step.test_id)
             result.append((step.test_id, step.test, step.on_failure, step.scope))
-    result.sort(key=lambda x: int(x[0].lstrip("t")))
+    result.sort(key=lambda x: int(x[0]))
     return result
 
 
@@ -467,9 +470,7 @@ def _render_tekton_task(
             {
                 **base_ctx,
                 "selector": config["selector"],
-                "resource_types": config.get(
-                    "resource_types", "pods,services,deployments"
-                ),
+                "resource_types": config.get("resource_types", "pods,services"),
             },
         )
 

@@ -1,0 +1,12 @@
+# Assisted by Claude Opus
+apiVersion: uat.openshift.io/v1
+kind: TestSuite
+metadata:
+  name: inference-validation-suite
+  version: v0.0.1
+spec:
+  tests:
+    # preflight
+    - name: platform-check-admin
+      scope: project
+      onFailure: continue

@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -7,7 +7,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteMany
-  storageClassName: nfs-csi
+  storageClassName: pure-fb-nfsv4
   resources:
     requests:
       storage: 500Gi
@@ -20,7 +20,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteMany
-  storageClassName: nfs-csi
+  storageClassName: pure-fb-nfsv4
   resources:
     requests:
       storage: 500Gi

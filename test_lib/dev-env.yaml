@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 apiVersion: uat.openshift.io/v1
 kind: Test
 metadata:
@@ -14,7 +14,7 @@ spec:
 
   dag:
     - name: notebook-server
-      image: quay.io/jschless/ml-dev-env:latest
+      image: quay.io/jschless/ml-dev-env:pytorch-2.9
       command:
         args:
           - jupyter

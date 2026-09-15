@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 apiVersion: uat.openshift.io/v1
 kind: Test
 metadata:
@@ -15,7 +15,7 @@ spec:
 
   dag:
     - name: iperf-server
-      image: networkstatic/iperf3:latest
+      image: docker.io/networkstatic/iperf3:latest
       command:
         args:
           - iperf3
@@ -37,7 +37,7 @@ spec:
       persistsThroughSweep: true
 
     - name: iperf-client
-      image: networkstatic/iperf3:latest
+      image: docker.io/networkstatic/iperf3:latest
       labelFilter: pass-fail
       env:
         - name: SERVER_HOST

@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 """Manual-run writer: numbered shell scripts and YAML manifests."""
 
 import shutil
@@ -154,9 +154,7 @@ def _derive_manual_script(
             "teardown-script.sh.j2",
             {
                 "selector": config["selector"],
-                "resource_types": config.get(
-                    "resource_types", "pods,services,deployments"
-                ),
+                "resource_types": config.get("resource_types", "pods,services"),
                 "namespace": namespace,
             },
         )

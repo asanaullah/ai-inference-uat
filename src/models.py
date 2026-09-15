@@ -1,4 +1,4 @@
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 """Pydantic schemas and dataclasses for the UAT test harness."""
 
 from dataclasses import dataclass, field
@@ -113,7 +113,7 @@ class ClusterTestSpec(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     nodes: list[NodeSpec]
     namespace: str
-    peer_namespace: str = Field(alias="peerNamespace")
+    peer_namespace: str = Field("", alias="peerNamespace")
     storage: StorageConfig
     peer_storage: StorageConfig | None = Field(default=None, alias="peerStorage")
     compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
@@ -168,6 +168,7 @@ class ResourceConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     api_version: str = Field(alias="apiVersion")
     kind: str
+    annotations: dict[str, str] = {}
     spec: dict[str, Any]
 
 

@@ -1,0 +1,88 @@
+# Assisted by Claude Opus
+# Enable intra-namespace pod-to-pod communication for tenant namespaces.
+#
+# The cluster ships a BaselineAdminNetworkPolicy (oac-dev-workload0-restrict-
+# tenant-networks) that DENIES tenant traffic to/from `namespaces: {}` -- an
+# empty selector matching every namespace INCLUDING the pod's own. So even
+# same-namespace pod-to-pod is denied by default, in both directions, and a
+# tenant NetworkPolicy that ALLOWS traffic is needed to override that baseline.
+#
+# To let a pod reach another pod in its own namespace we need BOTH:
+#   - ingress from same-namespace pods (so the receiver accepts), and
+#   - egress to   same-namespace pods (so the sender is permitted).
+#
+# Declaring policyTypes: [Egress] makes egress restricted to exactly what's
+# listed, which would otherwise cut off outbound internet (e.g. Go module
+# downloads to proxy.golang.org during in-cluster test builds). The second
+# egress rule adds that internet exception: 0.0.0.0/0 with the cluster pod and
+# service CIDRs EXCEPTed, so external egress works while cross-tenant east-west
+# egress stays governed by the cluster BaselineAdminNetworkPolicy. DNS/system
+# egress is already permitted by the cluster AdminNetworkPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-intra-namespace
+  namespace: uat-project
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector: {}
+  egress:
+  - to:
+    - podSelector: {}
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.132.0.0/14
+        - 172.31.0.0/16
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-intra-namespace
+  namespace: uat-peer
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector: {}
+  egress:
+  - to:
+    - podSelector: {}
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.132.0.0/14
+        - 172.31.0.0/16
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-intra-namespace
+  namespace: uat-admin
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector: {}
+  egress:
+  - to:
+    - podSelector: {}
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.132.0.0/14
+        - 172.31.0.0/16

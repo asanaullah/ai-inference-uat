@@ -1,3 +1,4 @@
+# Assisted by Claude Opus
 import pytest
 
 from src.common import create_jinja_env

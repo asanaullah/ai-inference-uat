@@ -2,7 +2,7 @@
 apiVersion: uat.openshift.io/v1
 kind: ClusterTest
 metadata:
-  name: ocp-uat
+  name: ocp-uat-admin
 spec:
   compliance:
     fipsEnabled: true
@@ -33,7 +33,6 @@ spec:
           cpuFreqGovernor: performance
           cpuIdleDriver: acpi_idle
           cpuIdleGovernor: menu
-          # AMD acpi_idle C2 is equivalent to Intel C1E (low single-digit us wake-up)
           cpuCStatesEnabled: [POLL, C1, C2]
           transparentHugepages: madvise
 
@@ -66,17 +65,10 @@ spec:
           transparentHugepages: madvise
 
 
-  namespace: uat-project
-  peerNamespace: uat-peer
+  namespace: uat-admin
 
   storage:
-    pvc: uat-project-storage
-    basePath: uat/results
-    models:
-      pvc: uat-models
-
-  peerStorage:
-    pvc: uat-peer-storage
+    pvc: uat-admin-storage
     basePath: uat/results
     models:
       pvc: uat-models

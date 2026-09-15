@@ -1,5 +1,5 @@
 #!/bin/bash
-# Assisted by Claude Opus 4.6
+# Assisted by Claude Opus
 set -e
 echo "Executing on {{ target }}: {{ args | shell_join }}"
 oc exec {{ target }} -n {{ namespace }} -- {{ args | shell_join }}
