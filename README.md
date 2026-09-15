@@ -190,7 +190,7 @@ Every DAG step gets a unique directory on the PVC, computed transparently by the
   <test_id>-<test>-<node>-<dag_step>/        (node-scoped)
     junit.xml
     ...
-  <test_id>-<test>-set<i>-<dag_step>/         (cluster-scoped, multiple sets)
+  <test_id>-<test>-<set>-<dag_step>/          (cluster-scoped, multiple sets; <set> is a 4-digit index, e.g. 0000)
     junit.xml
   <test_id>-<test>-<dag_step>/               (cluster single set / project-scoped)
     junit.xml
@@ -202,22 +202,26 @@ DAG pods also get a second mount at `/binaries` for access to compiled test bina
 
 ## Cluster Setup
 
-The `setup/` directory contains Kubernetes manifests for one-time cluster preparation:
+The `setup/` directory contains Kubernetes manifests and scripts for one-time cluster preparation:
 
-- **`namespaces-and-pvcs.yaml`** — creates the `uat-project` and `uat-peer` namespaces, a 100Gi RWX PVC for test results in each namespace (`uat-project-storage`, `uat-peer-storage`), and RBAC (Role + RoleBinding) in each namespace granting the test user access to pods, services, configmaps, and workload APIs.
-- **`uat-models-pvc.yaml`** — creates a 500Gi RWX PVC (`uat-models`) for pre-downloaded model weights in both namespaces.
+- **`namespaces-and-pvcs.yaml`** — creates the `uat-project`, `uat-peer`, and `uat-admin` namespaces (each labeled `massopen.cloud/project`), a 100Gi RWX PVC for test results in each namespace (`uat-project-storage`, `uat-peer-storage`, `uat-admin-storage`), and RBAC. The `uat-project` and `uat-peer` namespaces get a namespace-scoped Role + RoleBinding granting the test user access to pods, services, configmaps, and (in `uat-project`) workload APIs (jobs, jobsets, kubeflow, kserve, ray). The `uat-admin` namespace additionally defines a `uat-sa` ServiceAccount, a namespace-scoped admin Role, and a **ClusterRole + ClusterRoleBinding** granting read access to cluster-scoped resources (nodes, deployments, DataScienceClusters, ClusterPolicies, NodeFeatureDiscoveries, ServiceMeshControlPlanes) used by the admin platform checks.
+- **`uat-models-pvc.yaml`** — creates a 500Gi RWX PVC (`uat-models`) for pre-downloaded model weights in the `uat-project` and `uat-peer` namespaces.
 - **`model-downloader.yaml`** — one-shot pods (one per namespace) that download HuggingFace models to the models PVC. Add models to the `MODELS` list and re-run.
-- **`sanity_scan.py`** — a CLI tool that launches scanner pods on cluster nodes, scans hardware (GPU, CPU, memory, NUMA, InfiniBand, cpuset), and merges detected values into a cluster YAML's sanity block. Run with `python3 setup/sanity_scan.py --cluster cluster/ocp-test.yaml`.
+- **`allow-intra-namespace.yaml`** — NetworkPolicies for the `uat-project`, `uat-peer`, and `uat-admin` namespaces that permit same-namespace pod-to-pod traffic plus external egress (with cluster pod/service CIDRs excepted). Needed because the cluster's BaselineAdminNetworkPolicy denies tenant traffic by default — including same-namespace east-west — so builds and pod-to-service communication would otherwise fail.
+- **`prewarm-images.sh`** — a script that pre-pulls ("warms") every container image used by the test library onto each GPU node in a cluster config, so real test runs don't stall or time out on first-time image pulls. Launches a throwaway pod per (node × image), waits for the pulls to cache, then deletes the pods. Run with `setup/prewarm-images.sh cluster/ocp-test.yaml`.
 
 Apply in order:
 
 ```bash
 oc apply -f setup/namespaces-and-pvcs.yaml
+oc apply -f setup/allow-intra-namespace.yaml
 oc apply -f setup/uat-models-pvc.yaml
 oc apply -f setup/model-downloader.yaml
 # wait for downloads to complete:
 oc logs -f model-downloader -n uat-project
 oc logs -f model-downloader -n uat-peer
+# optionally pre-pull test images onto the GPU nodes:
+setup/prewarm-images.sh cluster/ocp-test.yaml
 ```
 
 ## Quickstart
@@ -229,7 +233,7 @@ oc logs -f model-downloader -n uat-peer
 - A PVC with **ReadWriteMany (RWX)** access mode (e.g. CephFS, NFS). Multi-node runs pin pods to different nodes that share one PVC — RWO block storage will fail at scheduling.
 - A separate RWX PVC for model weights, referenced via `storage.models.pvc` in the cluster config (see [Cluster Setup](#cluster-setup))
 - Nodes labeled with `kubernetes.io/hostname`
-- For Tekton: a service account with permissions to create/delete pods, services, deployments, configmaps, and exec into pods in the target namespace
+- For Tekton: a service account with permissions to create/delete pods, services, and configmaps, and to exec into pods in the target namespace
 
 ### Install
 
@@ -294,6 +298,14 @@ bash build/manual/03-build.sh
 bash build/manual/N-create-aggregator.sh
 bash build/manual/N-aggregate.sh
 bash build/manual/N-cleanup.sh
+```
+
+#### Interactive Runner (`scripts/manual_runner.py`)
+
+For running a suite interactively rather than script-by-script, `scripts/manual_runner.py` is a curses dashboard over the same `build/` output. It loads `steps.json` and the `manual/*.sh` scripts and presents a full-screen view where you select and run individual lifecycle items (configmap, builds, aggregate, final cleanup) or per-test items, watch each step's status (PENDING / RUNNING / OK / FAILED / SKIPPED), and tail live logs against a running cluster. Steps that share a sequence number run in parallel, and `finally` steps always run last even after a failure. Every run writes timestamped shell and pod logs under `build/logs/`, plus an appended `logs/timesheet.csv` (one row per executed step).
+
+```bash
+python3 scripts/manual_runner.py build
 ```
 
 ### Run with Tekton (untested)
@@ -429,7 +441,7 @@ Each test defines an ordered DAG of resources to deploy and run. DAG steps come 
 | `volumes` | Additional volume definitions |
 | `labels` | Custom labels added to pod metadata (dict of key-value strings) |
 | `sidecars` | List of sidecar containers. Rendered as `initContainers` with `restartPolicy: Always` (native K8s sidecar pattern). Each sidecar has `name`, `image`, `command`, `args`, `env`, `ports`, `resources`, `volumeMounts` |
-| `resourceConfig` | Deploys an arbitrary K8s resource instead of a pod. Contains `apiVersion`, `kind`, and `spec` (dict with Jinja2-rendered values). Mutually exclusive with `persistsThroughSweep`, `parameterSweep`, and `sidecars` |
+| `resourceConfig` | Deploys an arbitrary K8s resource instead of a pod. Contains `apiVersion`, `kind`, `spec` (dict with Jinja2-rendered values), and an optional `annotations` map (rendered onto the resource's `metadata.annotations`). Mutually exclusive with `persistsThroughSweep`, `parameterSweep`, and `sidecars` |
 | `serviceAccountName` | Service account for the generated pod |
 | `peer` | If `true`, this step runs in the peer namespace instead of the default namespace |
 
@@ -446,7 +458,7 @@ Available in `command`, `env`, and `resources` values via Jinja2:
 | `paramSweep.command` | Resolved command list for the current sweep entry |
 | `timestamp` | Run identifier (`__TIMESTAMP__` placeholder) |
 | `node` | Target node name |
-| `k8sNamePrefix` | Resource name prefix for the current step |
+| `resource_name` | The current step's Kubernetes `metadata.name` (from `build_resource_name()`). Available in `resourceConfig` step values (e.g. to make a resource reference itself) |
 | `namespace` | Target Kubernetes namespace |
 
 ### Parameter Sweeps
@@ -507,7 +519,7 @@ dag:
         value: '{{ services["vllm-server"].url }}'
 ```
 
-The generator creates a Kubernetes Service alongside the pod. Downstream steps reference it via `{{ services["vllm-server"].url }}`, which resolves to `http://svc-<test_id>-<test>-<node>-vllm-server:8000`. Service names are prefixed with `svc-` for DNS-1035 compliance. By default, services are headless (`clusterIP: None`) — traffic routes directly to the pod IP without kube-proxy load balancing. Set `headless: false` to create a standard ClusterIP service instead.
+The generator creates a Kubernetes Service alongside the pod. Downstream steps reference it via `{{ services["vllm-server"].url }}`, which resolves to `http://<service_name>:8000`. The service's `metadata.name` is generated by `build_resource_name()` with the `svc` type code — a fixed-width, DNS-1035-valid name like `ua-002-svc-vllm-server------wrk-4--------------------t` (see [ARCHITECTURE.md](ARCHITECTURE.md#generation) for the naming scheme). By default, services are headless (`clusterIP: None`) — traffic routes directly to the pod IP without kube-proxy load balancing. Set `headless: false` to create a standard ClusterIP service instead.
 
 ### Spec Override
 
@@ -570,7 +582,7 @@ The optional `storage.models` section configures a separate volume for pre-downl
 
 The `peerNamespace` field names a second namespace for cross-namespace tests. DAG steps with `peer: true` deploy to this namespace. When present, the generator creates independent infrastructure (ConfigMap, builder pod, aggregator pod) in the peer namespace. The optional `peerStorage` section configures the peer namespace's PVC, base path, and models volume; when omitted, the primary `storage` config is used for both namespaces.
 
-The `name` field is the value matched against the `nodeSelectorKey` label (default: `kubernetes.io/hostname`). It is also used in step names for human readability. For Kubernetes resource names (pods, services, Tekton tasks), the generator sanitizes the node name: invalid characters are replaced with dashes, uppercase is lowercased, and names longer than 16 characters are truncated to 12 characters with a 4-character hash suffix. Short, simple names like `wrk-4` are used as-is; FQDN hostnames like `ip-10-0-1-42.ec2.internal` are automatically shortened.
+The `name` field is the value matched against the `nodeSelectorKey` label (default: `kubernetes.io/hostname`). It is also used in step names for human readability. For Kubernetes resource names (pods, services, Tekton tasks), the node name becomes the fixed-width `<node>` field of `build_resource_name()` via `fit(node, 10)`: it is lowercased and sanitized (invalid characters replaced with dashes), and if the result exceeds 10 characters it is truncated to 5 characters with a 4-character hash suffix. Short, simple names like `wrk-4` are used as-is; FQDN hostnames like `ip-10-0-1-42.ec2.internal` are automatically shortened.
 
 All fields under `componentValidation` are available in Jinja2 templates. Resource keys in the sanity dict use actual Kubernetes resource names (e.g. `nvidia.com/gpu`, `cpu`, `memory`) so they match resource requests in DAG steps directly. The `resourceNames` sub-dict maps resource keys to hardware model names for component validation.
 
@@ -687,7 +699,7 @@ dag:
         targetPortNumber: 8000
 ```
 
-Resource steps are applied with `oc apply` and the resource type (e.g. `InferencePool`) is automatically added to the teardown resource type list so cleanup catches them. The `spec` values support Jinja2 templates (e.g. `{{ services["epp"].url }}`). Resource steps cannot use `persistsThroughSweep`, `parameterSweep`, or `sidecars`.
+Resource steps are applied with `oc apply` and the resource type (e.g. `InferencePool`) is automatically added to the teardown resource type list so cleanup catches them. The `spec` values support Jinja2 templates (e.g. `{{ services["epp"].url }}`), and `resource_name` resolves to the resource's own `metadata.name`. An optional `annotations` map is rendered onto the resource's `metadata.annotations` — the kserve test uses this to set `serving.kserve.io/deploymentMode: RawDeployment` on its InferenceService. Resource steps cannot use `persistsThroughSweep`, `parameterSweep`, or `sidecars`.
 
 ### Sidecar Containers
 
@@ -875,12 +887,13 @@ src/
 tests/                Unit and integration tests
 scripts/
   aggregate.py        JUnit XML aggregation (deployed via ConfigMap)
+  manual_runner.py    Curses dashboard for running a suite interactively from build/
 setup/
-  namespaces-and-pvcs.yaml  Namespaces, PVCs, RBAC, and peer namespace infrastructure
-  uat-models-pvc.yaml       PVC for model storage
-  model-downloader.yaml     Job to download models to PVCs
-  sanity_scan.py            CLI tool: launches scanner pods, scans hardware (GPU, CPU,
-                            memory, NUMA, InfiniBand, cpuset), merges into cluster YAML
+  namespaces-and-pvcs.yaml    Namespaces (uat-project, uat-peer, uat-admin), PVCs, and RBAC
+  uat-models-pvc.yaml         PVC for model storage
+  model-downloader.yaml       Pods to download models to PVCs
+  allow-intra-namespace.yaml  NetworkPolicies enabling same-namespace pod-to-pod traffic
+  prewarm-images.sh           Pre-pulls test-library images onto each GPU node
 templates/
   *.yaml.j2           Jinja2 templates for Kubernetes/Tekton manifests
   resource.yaml.j2    Generic template for arbitrary K8s resources (resource steps)

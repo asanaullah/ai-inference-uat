@@ -11,7 +11,7 @@ Platform prerequisites. Checks that must pass before GPU workloads run.
 | Test | Description |
 |------|-------------|
 | [platform-check](#1-platform-check) | RBAC permissions, API groups, and operator CRD registration |
-| [platform-check-admin](#2-platform-check-admin) | Operator health, CR status, DSC components, GPU node labels, required pods |
+| [platform-check-admin](#2-platform-check-admin) | Operator health, CR status, DSC components, GPU node labels, required pods, Compliance Operator, RHACS |
 | [component](#3-component) | Node hardware and software validation |
 | [iperf3](#4-iperf3) | Inter-node TCP bandwidth |
 
@@ -78,7 +78,7 @@ This is a single ephemeral pod with no GPUs, no server, no service, and no sweep
 
 | Name | Image | GPUs | Service | Key config |
 |------|-------|------|---------|------------|
-| checker | `registry.redhat.io/ubi9/ubi:latest` | none | none | `PERMISSION_CHECKS` env (JSON array of check objects) |
+| checker | `registry.redhat.io/ubi9/ubi:9.8` | none | none | `PERMISSION_CHECKS` env (JSON array of check objects) |
 
 The list of checks to run is defined in the test YAML and passed to the pod as a JSON array through the `PERMISSION_CHECKS` environment variable. Each entry in the array has a `type` (`permission`, `apiGroup`, or `crd`) and an `expected` value (`"yes"` or `"no"`). The user can add, remove, or change the expected value for any check in the YAML to match their cluster's configuration. The test goes through each check, compares the actual result against the expected value, and fails if any of them do not match.
 
@@ -126,7 +126,7 @@ The permission checks are there to verify that the test pod is sandboxed. If any
 
 ### Purpose
 
-This test is the admin counterpart to platform-check, ported from [memalhot/open-science-test-cases/operators/checks.sh](https://github.com/memalhot/open-science-test-cases/blob/main/operators/checks.sh). Where platform-check validates CRD existence using the Discovery API (available to any user), this test reads live operator Deployments, CR status fields, DSC component conditions, GPU node labels, and required pods across operator namespaces. These checks require cross-namespace and node-level read access, so the test runs under the `uat-sa` ServiceAccount in the `uat-admin` namespace with a ClusterRole.
+This test is the admin counterpart to platform-check, ported from [memalhot/open-science-test-cases/operators/checks.sh](https://github.com/memalhot/open-science-test-cases/blob/main/operators/checks.sh). Where platform-check validates CRD existence using the Discovery API (available to any user), this test reads live operator Deployments, CR status fields, DSC component conditions, GPU node labels, required pods, Compliance Operator status, and RHACS (Advanced Cluster Security) status across operator namespaces. These checks require cross-namespace and node-level read access, so the test runs under the `uat-sa` ServiceAccount in the `uat-admin` namespace with a ClusterRole.
 
 ### Architecture
 
@@ -190,10 +190,21 @@ The list of checks is defined in the test YAML and passed as a JSON array throug
 19. All GPU nodes have NFD label (`feature.node.kubernetes.io/pci-10de.present` or `pci-0302_10de.present`)
 20. All GPU nodes have `nvidia.com/gpu.count` label
 
+**Compliance Operator** (2 checks):
+
+21. `compliance-operator` Deployment in `openshift-compliance` is Available
+22. ComplianceSuite `.status.result` is `Compliant`
+
+**RHACS (Advanced Cluster Security)** (3 checks):
+
+23. `central` Deployment in `rhacs-operator` is Available
+24. `scanner` Deployment in `rhacs-operator` is Available
+25. SecuredCluster condition `Ready` is True
+
 **Required pods running** (2 checks):
 
-21. NFD Worker pods running in `openshift-nfd` (`app=nfd-worker`)
-22. NVIDIA GPU Driver pods running in `nvidia-gpu-operator` (`app.kubernetes.io/component=nvidia-driver`)
+26. NFD Worker pods running in `openshift-nfd` (`app=nfd-worker`)
+27. NVIDIA GPU Driver pods running in `nvidia-gpu-operator` (`app.kubernetes.io/component=nvidia-driver`)
 
 ### Prerequisites
 
@@ -238,7 +249,7 @@ This is a single ephemeral pod. There is no server, no service, and no sweep pha
 
 | Name | Image | GPUs | Service | Key config |
 |------|-------|------|---------|------------|
-| test-runner | `registry.redhat.io/ubi9/ubi:latest` | All node GPUs | none | `NODE_NAME` env; cluster spec embedded via `//go:embed` |
+| test-runner | `registry.redhat.io/ubi9/ubi:9.8` | All node GPUs | none | `NODE_NAME` env; cluster spec embedded via `//go:embed` |
 
 ### Pass-fail assertions
 
@@ -348,7 +359,7 @@ notebook-server [persistent]
 
 | Name | Image | GPUs | Service | Key config |
 |------|-------|------|---------|------------|
-| notebook-server | `quay.io/jschless/ml-dev-env:latest` | All node GPUs | headless ClusterIP :8888 | `jupyter lab --notebook-dir=/uat_workspace`, no auth, XSRF disabled, `HOME=/tmp` |
+| notebook-server | `quay.io/jschless/ml-dev-env:pytorch-2.9` | All node GPUs | headless ClusterIP :8888 | `jupyter lab --notebook-dir=/uat_workspace`, no auth, XSRF disabled, `HOME=/tmp` |
 | validator | `registry.redhat.io/ubi9/ubi:9.8` | none | none | `SERVER_URL`, `EXPECTED_GPU_COUNT`, `EXPECTED_NVLINK` env |
 
 ### Pass-fail assertions
@@ -362,7 +373,7 @@ notebook-server [persistent]
 
 ### Prerequisites
 
-The `quay.io/jschless/ml-dev-env:latest` image must be accessible from the cluster. At least one GPU must be available for the notebook server to schedule. The cluster spec must include `nvlink` in the node's `componentValidation.sanity` section.
+The `quay.io/jschless/ml-dev-env:pytorch-2.9` image must be accessible from the cluster. At least one GPU must be available for the notebook server to schedule. The cluster spec must include `nvlink` in the node's `componentValidation.sanity` section.
 
 ### Design rationale
 
@@ -394,7 +405,7 @@ The InferenceService is created as a resource step. KServe processes the CRD and
 | Name | Image | GPUs | Service | Key config |
 |------|-------|------|---------|------------|
 | isvc | (KServe CRD, operator creates the pod) | 1 (configurable via `serverConfig.gpuCount`) | KServe-managed `{name}-predictor` :8080 | `--max-model-len=10000 --gpu-memory-utilization=0.6` |
-| test-runner | `registry.redhat.io/ubi9/ubi:latest` | none | none | `SERVICE_URL`, `MODEL_NAME` env |
+| test-runner | `registry.redhat.io/ubi9/ubi:9.8` | none | none | `SERVICE_URL`, `MODEL_NAME` env |
 
 ### Pass-fail assertions
 
@@ -408,7 +419,7 @@ The KServe operator must be installed and the `serving.kserve.io` API group must
 
 ### Design rationale
 
-The test uses the `containers` predictor (inline container spec) rather than a separate ServingRuntime so the entire test is self-contained in a single CRD. The cluster defaults to RawDeployment mode, so no deployment mode annotation is needed. The test is restricted to project scope because the InferenceService CRD is a non-Pod resource whose spec is passed through as-is by the framework's generic `resource.yaml.j2` template. That template cannot inject a `nodeSelector` since the path differs by resource kind (`spec.predictor.nodeSelector` for InferenceService vs `spec.template.spec.nodeSelector` for Deployment, etc.). At node scope, two "per-node" InferenceServices could land on the same node, defeating the purpose. Node-scope support requires a `nodeSelectorPath` mechanism in the framework's resource step handling. The 10-minute polling timeout accounts for image pull time and model loading on first run.
+The test uses the `containers` predictor (inline container spec) rather than a separate ServingRuntime so the entire test is self-contained in a single CRD. RawDeployment mode is requested explicitly via the `serving.kserve.io/deploymentMode: RawDeployment` annotation, set through the resource step's `resourceConfig.annotations` — which the framework renders onto the InferenceService's `metadata.annotations`. The test is restricted to project scope because the InferenceService CRD is a non-Pod resource whose spec is passed through as-is by the framework's generic `resource.yaml.j2` template. That template cannot inject a `nodeSelector` since the path differs by resource kind (`spec.predictor.nodeSelector` for InferenceService vs `spec.template.spec.nodeSelector` for Deployment, etc.). At node scope, two "per-node" InferenceServices could land on the same node, defeating the purpose. Node-scope support requires a `nodeSelectorPath` mechanism in the framework's resource step handling. The 10-minute polling timeout accounts for image pull time and model loading on first run.
 
 
 ---
@@ -494,8 +505,8 @@ The vLLM server stays up for both the pass-fail and sweep phases. Each sweep ent
 | Name | Image | GPUs | Service | Key config |
 |------|-------|------|---------|------------|
 | vllm-server | `nvcr.io/nvidia/vllm:26.03-py3` | 1 | headless ClusterIP :8000 | `--max-model-len=10000 --gpu-memory-utilization=0.6` |
-| pass-fail | `quay.io/inference-perf/inference-perf:latest` | none | none | `SERVER_URL` env |
-| sweep | `quay.io/inference-perf/inference-perf:latest` | none | none | `SERVER_URL`, `SWEEP_COMMAND` env |
+| pass-fail | `quay.io/inference-perf/inference-perf:v0.6.1` | none | none | `SERVER_URL` env |
+| sweep | `quay.io/inference-perf/inference-perf:v0.6.1` | none | none | `SERVER_URL`, `SWEEP_COMMAND` env |
 
 ### Pass-fail assertions
 
@@ -547,8 +558,8 @@ The vLLM server stays up for both the pass-fail and sweep phases.
 | Name | Image | GPUs | Service | Key config |
 |------|-------|------|---------|------------|
 | vllm-server | `ghcr.io/llm-d/llm-d-cuda:v0.8.0` | All GPUs | headless ClusterIP :8000 | `--tensor-parallel-size=<all GPUs> --enable-chunked-prefill` |
-| pass-fail | `registry.redhat.io/ubi9/ubi:latest` | none | none | `SERVER_URL`, `MODEL_NAME` env |
-| sweep | `quay.io/inference-perf/inference-perf:latest` | none | none | `SERVER_URL`, `SWEEP_COMMAND` env |
+| pass-fail | `registry.redhat.io/ubi9/ubi:9.8` | none | none | `SERVER_URL`, `MODEL_NAME` env |
+| sweep | `quay.io/inference-perf/inference-perf:v0.6.1` | none | none | `SERVER_URL`, `SWEEP_COMMAND` env |
 
 ### Pass-fail assertions
 
@@ -608,10 +619,10 @@ Both prefill and decode run as separate processes in the same container, split b
 | Name | Image | GPUs | Service | Key config |
 |------|-------|------|---------|------------|
 | pd-server (main) | `ghcr.io/llm-d/llm-d-cuda:v0.8.0` | All GPUs | headless ClusterIP :8080 | Prefill TP = g/2, Decode TP = g - g/2, UCX/NIXL env |
-| routing-sidecar | `ghcr.io/llm-d/llm-d-router-disagg-sidecar:main` | (shared) | :8000 | `--kv-connector=nixlv2` |
+| routing-sidecar | `ghcr.io/llm-d/llm-d-router-disagg-sidecar:v0.9.0` | (shared) | :8000 | `--kv-connector=nixlv2` |
 | header-injector | `docker.io/nginx:1.27-alpine` | (shared) | :8080 | Injects `x-prefiller-host-port: localhost:8100` |
-| pass-fail | `registry.redhat.io/ubi9/ubi:latest` | none | none | `PREFILL_URL`, `DECODE_URL`, `GATEWAY_URL`, `MODEL_NAME`, `PREFILL_TP`, `DECODE_TP` |
-| sweep | `quay.io/inference-perf/inference-perf:latest` | none | none | `SERVER_URL` (nginx :8080), `SWEEP_COMMAND` |
+| pass-fail | `registry.redhat.io/ubi9/ubi:9.8` | none | none | `PREFILL_URL`, `DECODE_URL`, `GATEWAY_URL`, `MODEL_NAME`, `PREFILL_TP`, `DECODE_TP` |
+| sweep | `quay.io/inference-perf/inference-perf:v0.6.1` | none | none | `SERVER_URL` (nginx :8080), `SWEEP_COMMAND` |
 
 ### Pass-fail assertions
 
@@ -669,10 +680,10 @@ peer-server [persistent, peer namespace]
 
 | Name | Image | GPUs | Service | Key config |
 |------|-------|------|---------|------------|
-| project-server | `registry.redhat.io/ubi9/ubi:latest` | none | headless ClusterIP :8080 | `python3 -m http.server 8080` |
-| peer-server | `registry.redhat.io/ubi9/ubi:latest` | none | headless ClusterIP :8080 (peer namespace) | `python3 -m http.server 8080` |
-| project-check | `registry.redhat.io/ubi9/ubi:latest` | none | none | `OWN_URL`, `OTHER_SHORT_URL`, `OTHER_FQDN_URL` env |
-| peer-check | `registry.redhat.io/ubi9/ubi:latest` | none | none (peer namespace) | `OWN_URL`, `OTHER_SHORT_URL`, `OTHER_FQDN_URL` env |
+| project-server | `registry.redhat.io/ubi9/ubi:9.8` | none | headless ClusterIP :8080 | `python3 -m http.server 8080` |
+| peer-server | `registry.redhat.io/ubi9/ubi:9.8` | none | headless ClusterIP :8080 (peer namespace) | `python3 -m http.server 8080` |
+| project-check | `registry.redhat.io/ubi9/ubi:9.8` | none | none | `OWN_URL`, `OTHER_SHORT_URL`, `OTHER_FQDN_URL` env |
+| peer-check | `registry.redhat.io/ubi9/ubi:9.8` | none | none (peer namespace) | `OWN_URL`, `OTHER_SHORT_URL`, `OTHER_FQDN_URL` env |
 
 ### Pass-fail assertions
 
