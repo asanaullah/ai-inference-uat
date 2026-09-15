@@ -11,10 +11,6 @@ set -euo pipefail
 : "${BUILD_CMD:?BUILD_CMD is required}"
 UAT_WORKSPACE="${UAT_WORKSPACE:-/uat_workspace}"
 UAT_BIN="${UAT_BIN:-/uat_bin}"
-# Build run-id: where results land under <base_path>/<run-id> in the test
-# namespaces. Must match the build's --run-id (default "manual-run"); if you
-# override this, pass the same --run-id in BUILD_CMD.
-UAT_RUN_ID="${UAT_RUN_ID:-manual-run}"
 
 # Put the staged oc on PATH so the generated build/manual/*.sh scripts find it.
 export PATH="${UAT_BIN}:${PATH}"
@@ -46,10 +42,22 @@ echo "resolved commit=${SHA}"
 cp "${UAT_BIN}/oc" "${META_DIR}/oc"
 oc version --client > "${META_DIR}/oc-version.txt" 2>&1 || true
 
+echo "=== installing dependencies ==="
+python3 -m pip install --user --quiet -r requirements.txt
+python3 -m pip install --user --quiet kubernetes
+
+echo "=== build ==="
+# Produces build/steps.json + build/manual/*.sh under ${REPO_DIR}.
+eval "${BUILD_CMD}"
+
+# The build records the run_id it stamped into the scripts; auto_runner.py reads
+# the same file, so results-dir cleanup always targets what the build wrote.
+BUILD_RUN_ID="$(cat build/run_id.txt 2>/dev/null || echo unknown)"
+
 cat > "${META_DIR}/meta.json" <<EOF
 {
   "run_id": "${RUN_ID}",
-  "build_run_id": "${UAT_RUN_ID}",
+  "build_run_id": "${BUILD_RUN_ID}",
   "repo_url": "${REPO_URL}",
   "repo_ref": "${REPO_REF}",
   "commit": "${SHA}",
@@ -59,18 +67,11 @@ cat > "${META_DIR}/meta.json" <<EOF
 }
 EOF
 
-echo "=== installing dependencies ==="
-python3 -m pip install --user --quiet -r requirements.txt
-python3 -m pip install --user --quiet kubernetes
-
-echo "=== build ==="
-# Produces build/steps.json + build/manual/*.sh under ${REPO_DIR}.
-eval "${BUILD_CMD}"
-
 echo "=== run ==="
 # Runs the generated .sh steps step-by-step; captures pod logs/status via the
-# kubernetes client. Writes shell + pod logs, timesheet, and status under
-# ${LOG_DIR}.
-python3 scripts/auto_runner.py build --logs "${LOG_DIR}" --run-id "${UAT_RUN_ID}"
+# kubernetes client. auto_runner.py reads build/run_id.txt for the results-dir
+# cleanup, so no --run-id is needed here. Writes shell + pod logs, timesheet,
+# and status under ${LOG_DIR}.
+python3 scripts/auto_runner.py build --logs "${LOG_DIR}"
 
 echo "=== done: ${RUN_DIR} ==="

@@ -70,6 +70,10 @@ def write_manual(
 
     _stamp(manual_dir, run_id)
 
+    # Record the resolved run_id so downstream tooling (auto_runner.py) uses the
+    # exact value the scripts were stamped with, rather than re-guessing a default.
+    (output_dir / "run_id.txt").write_text(run_id + "\n")
+
 
 def _step_filename(step: Step) -> str:
     return step.name

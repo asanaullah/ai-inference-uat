@@ -690,9 +690,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--run-id",
-        default="manual-run",
-        help="build run-id (must match the build's --run-id); preflight cleans "
-        "<base_path>/<run-id> in each test namespace (default: manual-run)",
+        default=None,
+        help="build run-id; preflight cleans <base_path>/<run-id> in each test "
+        "namespace. Defaults to the build's own run_id.txt, or 'manual-run' if "
+        "that file is absent.",
     )
     parser.add_argument(
         "--no-preflight",
@@ -704,10 +705,21 @@ def main() -> None:
     build = Build(Path(args.build_dir))
     logs_root = Path(args.logs) if args.logs else build.build_dir / "logs"
 
+    # The build stamps its scripts with a run_id and records it in run_id.txt;
+    # prefer that so we clean exactly the results dir this build wrote to. An
+    # explicit --run-id overrides it; fall back to the shared default only if
+    # neither is available.
+    run_id = args.run_id
+    if run_id is None:
+        run_id_file = build.build_dir / "run_id.txt"
+        run_id = (
+            run_id_file.read_text().strip() if run_id_file.exists() else "manual-run"
+        )
+
     # In-cluster: authenticate as the pod's ServiceAccount (uat-runner-sa).
     config.load_incluster_config()
 
-    runner = AutoRunner(build, logs_root, args.run_id)
+    runner = AutoRunner(build, logs_root, run_id)
     ok = runner.run_all(preflight=not args.no_preflight)
     print(f"[auto-runner] overall: {'PASSED' if ok else 'FAILED'}", flush=True)
     raise SystemExit(0 if ok else 1)
