@@ -26,8 +26,11 @@ mkdir -p "${META_DIR}" "${LOG_DIR}"
 # non-root uid); point it at the run dir on the PVC.
 export HOME="${RUN_DIR}"
 
-# Mirror all setup output to the run dir as it is produced.
-exec > >(tee -a "${RUN_DIR}/runner.log") 2>&1
+# Mirror all setup output to the run dir as it is produced. Line-buffer tee
+# (stdbuf) so `oc logs -f` on the pod shows progress live instead of in 4KB
+# chunks; PYTHONUNBUFFERED keeps auto_runner.py's own output prompt too.
+export PYTHONUNBUFFERED=1
+exec > >(stdbuf -oL -eL tee -a "${RUN_DIR}/runner.log") 2>&1
 echo "=== uat-runner ${RUN_ID} ==="
 echo "repo=${REPO_URL} ref=${REPO_REF}"
 

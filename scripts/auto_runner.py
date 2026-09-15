@@ -85,8 +85,14 @@ _CRD_TYPES = [
     ("ray.io", "v1", "rayservices"),
 ]
 
-# Cluster-injected configmaps to keep during preflight (recreated anyway).
-_KEEP_CONFIGMAPS = {"kube-root-ca.crt", "openshift-service-ca.crt"}
+# Platform-injected configmaps to keep during preflight — cluster CA bundles and
+# the ODH/OpenShift-AI trust bundles, none of which are uat run artifacts.
+_KEEP_CONFIGMAPS = {
+    "kube-root-ca.crt",
+    "openshift-service-ca.crt",
+    "odh-trusted-ca-bundle",
+    "odh-kserve-custom-ca-bundle",
+}
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
@@ -591,8 +597,10 @@ class AutoRunner:
         return latest
 
     def _pod_phase(self, pod: str, ns: str) -> str:
+        # Read the pod object (needs only `get pods`), not read_namespaced_pod_
+        # status, which hits the pods/status subresource the runner SA can't get.
         try:
-            p = self._core.read_namespaced_pod_status(name=pod, namespace=ns)
+            p = self._core.read_namespaced_pod(name=pod, namespace=ns)
         except (ApiException, OSError):
             return ""
         return p.status.phase or ""
@@ -610,7 +618,7 @@ class AutoRunner:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                self._core.read_namespaced_pod_status(name=pod, namespace=ns)
+                self._core.read_namespaced_pod(name=pod, namespace=ns)
             except ApiException:
                 return
             time.sleep(1)
