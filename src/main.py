@@ -11,7 +11,6 @@ from pydantic import ValidationError
 from .common import create_jinja_env
 from .step_generator import generate_steps, load_steps_file
 from .writers.manual import write_manual
-from .writers.tekton import write_tekton
 
 
 def main() -> None:
@@ -45,7 +44,7 @@ def main() -> None:
 
     if args.steps:
         try:
-            all_steps, tc, cs = load_steps_file(Path(args.steps))
+            all_steps, _tc, cs = load_steps_file(Path(args.steps))
         except FileNotFoundError:
             print(f"Error: steps file not found: {args.steps}")
             raise SystemExit(1)
@@ -62,7 +61,7 @@ def main() -> None:
             )
             raise SystemExit(1)
 
-        all_steps, tc, cs = generate_steps(
+        all_steps, _tc, cs = generate_steps(
             config_path=args.config,
             test_suite_path=args.test_suite,
             test_lib_path=args.test_lib,
@@ -76,12 +75,6 @@ def main() -> None:
         write_manual(all_steps, output_dir, args.run_id, jinja_env, cs.namespace)
     except (OSError, TemplateError, ValueError) as e:
         print(f"Error writing manual output: {e}")
-        raise SystemExit(1)
-
-    try:
-        write_tekton(all_steps, tc, cs, jinja_env, output_dir)
-    except (OSError, TemplateError, ValueError) as e:
-        print(f"Error writing Tekton output: {e}")
         raise SystemExit(1)
 
     print(f"\nOutput written to {output_dir}/")

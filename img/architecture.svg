@@ -13,18 +13,18 @@
 <title>cluster_execution</title>
 <path fill="#fef8e1" stroke="#d4960a" stroke-width="2" d="M218.88,-8C218.88,-8 882.88,-8 882.88,-8 888.88,-8 894.88,-14 894.88,-20 894.88,-20 894.88,-1320.5 894.88,-1320.5 894.88,-1326.5 888.88,-1332.5 882.88,-1332.5 882.88,-1332.5 218.88,-1332.5 218.88,-1332.5 212.88,-1332.5 206.88,-1326.5 206.88,-1320.5 206.88,-1320.5 206.88,-20 206.88,-20 206.88,-14 212.88,-8 218.88,-8"/>
 <text xml:space="preserve" text-anchor="start" x="214.88" y="-1316.2" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="14.00">EXECUTION</text>
-<text xml:space="preserve" text-anchor="start" x="294.38" y="-1316.2" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#666666"> &#160;OpenShift / Tekton</text>
+<text xml:space="preserve" text-anchor="start" x="294.38" y="-1316.2" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#666666"> &#160;OpenShift &#160;(manual scripts / auto_runner)</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_cluster_pipeline</title>
 <path fill="#fdf0c8" stroke="#cc8a00" stroke-width="1.5" d="M238.88,-28C238.88,-28 862.88,-28 862.88,-28 868.88,-28 874.88,-34 874.88,-40 874.88,-40 874.88,-1276.75 874.88,-1276.75 874.88,-1282.75 868.88,-1288.75 862.88,-1288.75 862.88,-1288.75 238.88,-1288.75 238.88,-1288.75 232.88,-1288.75 226.88,-1282.75 226.88,-1276.75 226.88,-1276.75 226.88,-40 226.88,-40 226.88,-34 232.88,-28 238.88,-28"/>
-<text xml:space="preserve" text-anchor="start" x="234.88" y="-1274.35" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="12.00">Cluster Pipeline</text>
-<text xml:space="preserve" text-anchor="start" x="324.88" y="-1274.35" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#666666"> &#160;single flat pipeline, all tasks direct entries</text>
+<text xml:space="preserve" text-anchor="start" x="234.88" y="-1274.35" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="12.00">Run</text>
+<text xml:space="preserve" text-anchor="start" x="258.88" y="-1274.35" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#666666"> &#160;setup → tests → teardown, in test suite list order</text>
 </g>
 <g id="clust4" class="cluster">
 <title>cluster_finally</title>
 <path fill="white" stroke="#b37800" stroke-width="1.5" stroke-dasharray="5,2" d="M615.88,-48C615.88,-48 791.88,-48 791.88,-48 797.88,-48 803.88,-54 803.88,-60 803.88,-60 803.88,-519.25 803.88,-519.25 803.88,-525.25 797.88,-531.25 791.88,-531.25 791.88,-531.25 615.88,-531.25 615.88,-531.25 609.88,-531.25 603.88,-525.25 603.88,-519.25 603.88,-519.25 603.88,-60 603.88,-60 603.88,-54 609.88,-48 615.88,-48"/>
-<text xml:space="preserve" text-anchor="start" x="611.88" y="-517.8" font-family="Helvetica,sans-Serif" font-style="italic" font-size="11.00">finally</text>
+<text xml:space="preserve" text-anchor="start" x="611.88" y="-517.8" font-family="Helvetica,sans-Serif" font-style="italic" font-size="11.00">teardown (always runs)</text>
 </g>
 <!-- test_suite -->
 <g id="node1" class="node">
@@ -101,7 +101,7 @@
 <polygon fill="#c2e4cd" stroke="none" points="760.55,-1586.5 760.55,-1637.5 841.12,-1637.5 841.12,-1586.5 760.55,-1586.5"/>
 <text xml:space="preserve" text-anchor="start" x="788.09" y="-1618.05" font-family="Helvetica,sans-Serif" font-size="11.00">Write</text>
 <text xml:space="preserve" text-anchor="start" x="783.21" y="-1607.05" font-family="Helvetica,sans-Serif" font-size="11.00">Manual</text>
-<text xml:space="preserve" text-anchor="start" x="783.59" y="-1597.95" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#555555">+ Tekton</text>
+<text xml:space="preserve" text-anchor="start" x="787.71" y="-1597.95" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#555555">scripts</text>
 <path fill="none" stroke="#2e944a" stroke-width="2" d="M267.62,-1581.5C267.62,-1581.5 834.12,-1581.5 834.12,-1581.5 840.12,-1581.5 846.12,-1587.5 846.12,-1593.5 846.12,-1593.5 846.12,-1673.5 846.12,-1673.5 846.12,-1679.5 840.12,-1685.5 834.12,-1685.5 834.12,-1685.5 267.62,-1685.5 267.62,-1685.5 261.62,-1685.5 255.62,-1679.5 255.62,-1673.5 255.62,-1673.5 255.62,-1593.5 255.62,-1593.5 255.62,-1587.5 261.62,-1581.5 267.62,-1581.5"/>
 </g>
 <!-- test_suite&#45;&gt;generator -->
@@ -142,31 +142,22 @@
 <!-- build_output -->
 <g id="node5" class="node">
 <title>build_output</title>
-<path fill="#f8f9fa" stroke="none" stroke-width="1.5" d="M779.5,-1507.5C779.5,-1507.5 322.25,-1507.5 322.25,-1507.5 316.25,-1507.5 310.25,-1501.5 310.25,-1495.5 310.25,-1495.5 310.25,-1400.5 310.25,-1400.5 310.25,-1394.5 316.25,-1388.5 322.25,-1388.5 322.25,-1388.5 779.5,-1388.5 779.5,-1388.5 785.5,-1388.5 791.5,-1394.5 791.5,-1400.5 791.5,-1400.5 791.5,-1495.5 791.5,-1495.5 791.5,-1501.5 785.5,-1507.5 779.5,-1507.5"/>
-<path fill="#f0e6f8" stroke="none" d="M323.25,-1389.5C323.25,-1389.5 778.5,-1389.5 778.5,-1389.5 784.5,-1389.5 790.5,-1395.5 790.5,-1401.5 790.5,-1401.5 790.5,-1494.5 790.5,-1494.5 790.5,-1500.5 784.5,-1506.5 778.5,-1506.5 778.5,-1506.5 323.25,-1506.5 323.25,-1506.5 317.25,-1506.5 311.25,-1500.5 311.25,-1494.5 311.25,-1494.5 311.25,-1401.5 311.25,-1401.5 311.25,-1395.5 317.25,-1389.5 323.25,-1389.5"/>
-<polygon fill="#7e2ec8" stroke="none" points="316.25,-1462.5 316.25,-1501.5 785.5,-1501.5 785.5,-1462.5 316.25,-1462.5"/>
+<path fill="#f8f9fa" stroke="none" stroke-width="1.5" d="M676.38,-1507.5C676.38,-1507.5 425.38,-1507.5 425.38,-1507.5 419.38,-1507.5 413.38,-1501.5 413.38,-1495.5 413.38,-1495.5 413.38,-1400.5 413.38,-1400.5 413.38,-1394.5 419.38,-1388.5 425.38,-1388.5 425.38,-1388.5 676.38,-1388.5 676.38,-1388.5 682.38,-1388.5 688.38,-1394.5 688.38,-1400.5 688.38,-1400.5 688.38,-1495.5 688.38,-1495.5 688.38,-1501.5 682.38,-1507.5 676.38,-1507.5"/>
+<path fill="#f0e6f8" stroke="none" d="M426.38,-1389.5C426.38,-1389.5 675.38,-1389.5 675.38,-1389.5 681.38,-1389.5 687.38,-1395.5 687.38,-1401.5 687.38,-1401.5 687.38,-1494.5 687.38,-1494.5 687.38,-1500.5 681.38,-1506.5 675.38,-1506.5 675.38,-1506.5 426.38,-1506.5 426.38,-1506.5 420.38,-1506.5 414.38,-1500.5 414.38,-1494.5 414.38,-1494.5 414.38,-1401.5 414.38,-1401.5 414.38,-1395.5 420.38,-1389.5 426.38,-1389.5"/>
+<polygon fill="#7e2ec8" stroke="none" points="419.38,-1462.5 419.38,-1501.5 682.38,-1501.5 682.38,-1462.5 419.38,-1462.5"/>
 <text xml:space="preserve" text-anchor="start" x="490.88" y="-1478.15" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
 <text xml:space="preserve" text-anchor="start" x="538.88" y="-1478.15" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="13.00" fill="white">build/</text>
 <text xml:space="preserve" text-anchor="start" x="574.88" y="-1478.15" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<polygon fill="#e2d0f0" stroke="none" points="316.25,-1394.5 316.25,-1458.5 579.25,-1458.5 579.25,-1394.5 316.25,-1394.5"/>
-<text xml:space="preserve" text-anchor="start" x="427.12" y="-1439.05" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="11.00">manual/</text>
-<text xml:space="preserve" text-anchor="start" x="367.12" y="-1428.05" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<text xml:space="preserve" text-anchor="start" x="427.12" y="-1428.05" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#555555">manifests/*.yaml (data)</text>
-<text xml:space="preserve" text-anchor="start" x="360" y="-1417.05" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<text xml:space="preserve" text-anchor="start" x="420" y="-1417.05" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#555555">NNN&#45;*.sh scripts (actions)</text>
-<text xml:space="preserve" text-anchor="start" x="326.25" y="-1406.05" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<text xml:space="preserve" text-anchor="start" x="386.25" y="-1406.05" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#888888">scripts in root, manifests in subdir</text>
-<text xml:space="preserve" text-anchor="start" x="521.25" y="-1406.05" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<polygon fill="#e2d0f0" stroke="none" points="583.25,-1394.5 583.25,-1458.5 785.5,-1458.5 785.5,-1394.5 583.25,-1394.5"/>
-<text xml:space="preserve" text-anchor="start" x="666.38" y="-1439.05" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="11.00">tekton/</text>
-<text xml:space="preserve" text-anchor="start" x="605.25" y="-1428.05" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<text xml:space="preserve" text-anchor="start" x="665.25" y="-1428.05" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#555555">cluster pipeline, tasks,</text>
-<text xml:space="preserve" text-anchor="start" x="602.62" y="-1417.05" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<text xml:space="preserve" text-anchor="start" x="662.62" y="-1417.05" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#555555">guard tasks, pipelinerun</text>
-<text xml:space="preserve" text-anchor="start" x="593.25" y="-1406.05" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<text xml:space="preserve" text-anchor="start" x="653.25" y="-1406.05" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#888888">single flat pipeline</text>
-<text xml:space="preserve" text-anchor="start" x="727.5" y="-1406.05" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<path fill="none" stroke="#7e2ec8" stroke-width="2" d="M323.25,-1389.5C323.25,-1389.5 778.5,-1389.5 778.5,-1389.5 784.5,-1389.5 790.5,-1395.5 790.5,-1401.5 790.5,-1401.5 790.5,-1494.5 790.5,-1494.5 790.5,-1500.5 784.5,-1506.5 778.5,-1506.5 778.5,-1506.5 323.25,-1506.5 323.25,-1506.5 317.25,-1506.5 311.25,-1500.5 311.25,-1494.5 311.25,-1494.5 311.25,-1401.5 311.25,-1401.5 311.25,-1395.5 317.25,-1389.5 323.25,-1389.5"/>
+<polygon fill="#e2d0f0" stroke="none" points="419.38,-1394.5 419.38,-1458.5 682.38,-1458.5 682.38,-1394.5 419.38,-1394.5"/>
+<text xml:space="preserve" text-anchor="start" x="530.25" y="-1439.05" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="11.00">manual/</text>
+<text xml:space="preserve" text-anchor="start" x="470.25" y="-1428.05" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text xml:space="preserve" text-anchor="start" x="530.25" y="-1428.05" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#555555">manifests/*.yaml (data)</text>
+<text xml:space="preserve" text-anchor="start" x="463.12" y="-1417.05" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text xml:space="preserve" text-anchor="start" x="523.12" y="-1417.05" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#555555">NNN&#45;*.sh scripts (actions)</text>
+<text xml:space="preserve" text-anchor="start" x="429.38" y="-1406.05" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text xml:space="preserve" text-anchor="start" x="489.38" y="-1406.05" font-family="Helvetica,sans-Serif" font-size="9.00" fill="#888888">scripts in root, manifests in subdir</text>
+<text xml:space="preserve" text-anchor="start" x="624.38" y="-1406.05" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<path fill="none" stroke="#7e2ec8" stroke-width="2" d="M426.38,-1389.5C426.38,-1389.5 675.38,-1389.5 675.38,-1389.5 681.38,-1389.5 687.38,-1395.5 687.38,-1401.5 687.38,-1401.5 687.38,-1494.5 687.38,-1494.5 687.38,-1500.5 681.38,-1506.5 675.38,-1506.5 675.38,-1506.5 426.38,-1506.5 426.38,-1506.5 420.38,-1506.5 414.38,-1500.5 414.38,-1494.5 414.38,-1494.5 414.38,-1401.5 414.38,-1401.5 414.38,-1395.5 420.38,-1389.5 426.38,-1389.5"/>
 </g>
 <!-- generator&#45;&gt;build_output -->
 <g id="edge14" class="edge">
@@ -234,20 +225,19 @@
 <path fill="#f8f9fa" stroke="none" stroke-width="1.5" d="M843.25,-780C843.25,-780 258.5,-780 258.5,-780 252.5,-780 246.5,-774 246.5,-768 246.5,-768 246.5,-588.25 246.5,-588.25 246.5,-582.25 252.5,-576.25 258.5,-576.25 258.5,-576.25 843.25,-576.25 843.25,-576.25 849.25,-576.25 855.25,-582.25 855.25,-588.25 855.25,-588.25 855.25,-768 855.25,-768 855.25,-774 849.25,-780 843.25,-780"/>
 <path fill="#e8eef8" stroke="none" d="M259.5,-577.25C259.5,-577.25 842.25,-577.25 842.25,-577.25 848.25,-577.25 854.25,-583.25 854.25,-589.25 854.25,-589.25 854.25,-767 854.25,-767 854.25,-773 848.25,-779 842.25,-779 842.25,-779 259.5,-779 259.5,-779 253.5,-779 247.5,-773 247.5,-767 247.5,-767 247.5,-589.25 247.5,-589.25 247.5,-583.25 253.5,-577.25 259.5,-577.25"/>
 <polygon fill="#354999" stroke="none" points="252.5,-726.25 252.5,-774 849.25,-774 849.25,-726.25 252.5,-726.25"/>
-<text xml:space="preserve" text-anchor="start" x="325.21" y="-745.7" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="14.00" fill="white">4</text>
-<text xml:space="preserve" text-anchor="start" x="454.12" y="-746.85" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="12.00" fill="white"> &#160;Test Task Chains</text>
-<text xml:space="preserve" text-anchor="start" x="679.04" y="-746.62" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#9aa1cc"> &#160;in test suite list order</text>
+<text xml:space="preserve" text-anchor="start" x="327.33" y="-745.7" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="14.00" fill="white">4</text>
+<text xml:space="preserve" text-anchor="start" x="460.5" y="-746.85" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="12.00" fill="white"> &#160;Test Execution</text>
+<text xml:space="preserve" text-anchor="start" x="676.92" y="-746.62" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#9aa1cc"> &#160;in test suite list order</text>
 <polygon fill="#dde4f0" stroke="none" points="252.5,-628.25 252.5,-722.25 445.75,-722.25 445.75,-628.25 252.5,-628.25"/>
 <text xml:space="preserve" text-anchor="start" x="274.88" y="-702.8" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
 <text xml:space="preserve" text-anchor="start" x="358.88" y="-702.8" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="11.00">scope: node</text>
-<text xml:space="preserve" text-anchor="start" x="265.12" y="-691.8" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<text xml:space="preserve" text-anchor="start" x="349.12" y="-691.8" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#555555">parallel task chains</text>
-<text xml:space="preserve" text-anchor="start" x="318" y="-681.75" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#555555">(one per node)</text>
-<text xml:space="preserve" text-anchor="start" x="262.5" y="-659.8" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<text xml:space="preserve" text-anchor="start" x="346.5" y="-659.8" font-family="Courier,monospace" font-size="9.00">deploy DAG → wait</text>
-<text xml:space="preserve" text-anchor="start" x="304.5" y="-650.7" font-family="Courier,monospace" font-size="9.00">→ run steps/sweep</text>
-<text xml:space="preserve" text-anchor="start" x="276.38" y="-639.8" font-family="Courier,monospace" font-size="9.00">→ teardown DAG</text>
-<text xml:space="preserve" text-anchor="start" x="349.88" y="-639.8" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text xml:space="preserve" text-anchor="start" x="271.5" y="-691.8" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text xml:space="preserve" text-anchor="start" x="355.5" y="-691.8" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#555555">parallel per node</text>
+<text xml:space="preserve" text-anchor="start" x="262.5" y="-669.8" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text xml:space="preserve" text-anchor="start" x="346.5" y="-669.8" font-family="Courier,monospace" font-size="9.00">deploy DAG → wait</text>
+<text xml:space="preserve" text-anchor="start" x="304.5" y="-660.7" font-family="Courier,monospace" font-size="9.00">→ run steps/sweep</text>
+<text xml:space="preserve" text-anchor="start" x="276.38" y="-649.8" font-family="Courier,monospace" font-size="9.00">→ teardown DAG</text>
+<text xml:space="preserve" text-anchor="start" x="349.88" y="-649.8" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
 <polygon fill="#dde4f0" stroke="none" points="449.75,-628.25 449.75,-722.25 652,-722.25 652,-628.25 449.75,-628.25"/>
 <text xml:space="preserve" text-anchor="start" x="471.75" y="-702.8" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
 <text xml:space="preserve" text-anchor="start" x="555.75" y="-702.8" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="11.00">scope: cluster</text>
@@ -270,8 +260,8 @@
 <text xml:space="preserve" text-anchor="start" x="708" y="-650.7" font-family="Courier,monospace" font-size="9.00">→ cross&#45;namespace</text>
 <text xml:space="preserve" text-anchor="start" x="672" y="-639.8" font-family="Courier,monospace" font-size="9.00">→ collect results</text>
 <text xml:space="preserve" text-anchor="start" x="761.25" y="-639.8" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<text xml:space="preserve" text-anchor="start" x="403.12" y="-604.8" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<text xml:space="preserve" text-anchor="start" x="475.12" y="-604.8" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#555555">each test ends with a guard task (fan&#45;in sync point)</text>
+<text xml:space="preserve" text-anchor="start" x="418.5" y="-604.8" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text xml:space="preserve" text-anchor="start" x="490.5" y="-604.8" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#555555">the runner enforces onFailure after each test</text>
 <text xml:space="preserve" text-anchor="start" x="388.12" y="-593.8" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
 <text xml:space="preserve" text-anchor="start" x="460.12" y="-593.8" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#555555">per&#45;test onFailure: continue | skipTest | abort</text>
 <text xml:space="preserve" text-anchor="start" x="653.62" y="-593.8" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
@@ -334,7 +324,7 @@
 <text xml:space="preserve" text-anchor="start" x="1126.12" y="-141.4" font-family="Helvetica,sans-Serif" font-size="10.00" fill="#a0d4a3"> &#160;PVC</text>
 <text xml:space="preserve" text-anchor="start" x="1153.12" y="-141.4" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
 <text xml:space="preserve" text-anchor="start" x="928.88" y="-104.3" font-family="Helvetica,sans-Serif" font-size="11.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<text xml:space="preserve" text-anchor="start" x="976.88" y="-104.3" font-family="Courier,monospace" font-size="10.00">&lt;basePath&gt;/&lt;pipeline&#45;run&#45;name&gt;/</text>
+<text xml:space="preserve" text-anchor="start" x="976.88" y="-104.3" font-family="Courier,monospace" font-size="10.00">&lt;basePath&gt;/&lt;run&#45;id&gt;/</text>
 <text xml:space="preserve" text-anchor="start" x="928.88" y="-94.25" font-family="Courier,monospace" font-size="10.00">├── binaries/&lt;test&gt;/test.bin</text>
 <text xml:space="preserve" text-anchor="start" x="928.88" y="-84.25" font-family="Courier,monospace" font-size="10.00">├── &lt;step_name&gt;/ &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
 <text xml:space="preserve" text-anchor="start" x="1108.88" y="-84.25" font-family="Courier,monospace" font-size="10.00" fill="#666666"># flat, one per step</text>

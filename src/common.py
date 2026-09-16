@@ -320,7 +320,7 @@ def sanitize_node_name(name: str) -> str:
 
 
 _RESOURCE_TYPES = frozenset(
-    {"pod", "svc", "crd", "grd", "bld", "agg", "cfg", "cln", "tdn", "ftd"}
+    {"pod", "svc", "crd", "bld", "agg", "cfg", "cln", "tdn", "ftd"}
 )
 
 _FIELD_WIDTHS = {

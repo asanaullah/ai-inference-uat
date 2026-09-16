@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Assisted by Claude Opus
 """
-auto_runner.py — Headless driver for UAT test suites (replaces Tekton).
+auto_runner.py — Headless driver for UAT test suites.
 
 Runs inside the uat-runner pod (see setup/auto_runner.yaml). Loads the build
 directory produced by the generator (steps.json + manual/*.sh) and executes
@@ -142,17 +142,39 @@ class AutoRunner:
                 self.preflight_summary["error"] = trace
 
         all_ok = True
+        aborting = False
+        post_ids = set(_POST_TEST_LIFECYCLE)
         for item in self._ordered_items():
+            # Once a test has hit an `abort` policy we skip straight to cleanup:
+            # only the post-test lifecycle (aggregate/cleanup) still runs, every
+            # remaining test is skipped.
+            if aborting and item.item_id not in post_ids:
+                print(
+                    f"[auto-runner] aborting; skipping {item.item_id} '{item.name}'",
+                    flush=True,
+                )
+                continue
             ok, aborted = self._run_item(item)
             all_ok = all_ok and ok
-            # A lifecycle step (configmap/build/aggregate) has no failure policy;
-            # if it aborts, later items can't run meaningfully, so stop the run.
-            if aborted and item.kind == "lifecycle":
+            if not aborted:
+                continue
+            # A setup lifecycle step (configmap/build) has no failure policy; if
+            # it aborts, nothing downstream can run meaningfully, so stop now
+            # without even attempting teardown.
+            if item.kind == "lifecycle" and item.item_id not in post_ids:
                 print(
                     f"[auto-runner] lifecycle item '{item.name}' aborted; stopping run",
                     flush=True,
                 )
                 break
+            # A test's `abort` policy (or an aborted post-test lifecycle step)
+            # skips straight to cleanup: stop launching tests, but let the
+            # remaining teardown items run.
+            print(
+                f"[auto-runner] '{item.name}' aborted; skipping to cleanup",
+                flush=True,
+            )
+            aborting = True
         self._write_status(all_ok)
         return all_ok
 

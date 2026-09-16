@@ -82,7 +82,7 @@ digraph architecture {
                 <TD BGCOLOR="#e4f3e9"><FONT POINT-SIZE="16" COLOR="#2e944a">→</FONT></TD>
                 <TD BGCOLOR="#c2e4cd">Render &amp;<BR/>Validate<BR/><FONT POINT-SIZE="9" COLOR="#555">Jinja2 + YAML</FONT></TD>
                 <TD BGCOLOR="#e4f3e9"><FONT POINT-SIZE="16" COLOR="#2e944a">→</FONT></TD>
-                <TD BGCOLOR="#c2e4cd">Write<BR/>Manual<BR/><FONT POINT-SIZE="9" COLOR="#555">+ Tekton</FONT></TD>
+                <TD BGCOLOR="#c2e4cd">Write<BR/>Manual<BR/><FONT POINT-SIZE="9" COLOR="#555">scripts</FONT></TD>
             </TR>
         </TABLE>
     >]
@@ -94,7 +94,7 @@ digraph architecture {
     build_output [shape=plaintext margin=0 label=<
         <TABLE BORDER="2" CELLBORDER="0" CELLSPACING="4" CELLPADDING="10"
                BGCOLOR="#f0e6f8" COLOR="#7e2ec8" STYLE="ROUNDED">
-            <TR><TD COLSPAN="2" BGCOLOR="#7e2ec8" CELLPADDING="12">
+            <TR><TD BGCOLOR="#7e2ec8" CELLPADDING="12">
                 <FONT COLOR="white" POINT-SIZE="13"><B>build/</B></FONT>
             </TD></TR>
             <TR>
@@ -102,11 +102,6 @@ digraph architecture {
                     <FONT POINT-SIZE="10" COLOR="#555">manifests/*.yaml (data)</FONT><BR/>
                     <FONT POINT-SIZE="10" COLOR="#555">NNN-*.sh scripts (actions)</FONT><BR/>
                     <FONT POINT-SIZE="9" COLOR="#888">scripts in root, manifests in subdir</FONT>
-                </TD>
-                <TD BGCOLOR="#e2d0f0"><FONT POINT-SIZE="11"><B>tekton/</B></FONT><BR/>
-                    <FONT POINT-SIZE="10" COLOR="#555">cluster pipeline, tasks,</FONT><BR/>
-                    <FONT POINT-SIZE="10" COLOR="#555">guard tasks, pipelinerun</FONT><BR/>
-                    <FONT POINT-SIZE="9" COLOR="#888">single flat pipeline</FONT>
                 </TD>
             </TR>
         </TABLE>
@@ -117,7 +112,7 @@ digraph architecture {
     // ═══════════════════════════════════════════════════════
 
     subgraph cluster_execution {
-        label=<<FONT POINT-SIZE="14"><B>EXECUTION</B></FONT><FONT POINT-SIZE="10" COLOR="#666">  OpenShift / Tekton</FONT>>
+        label=<<FONT POINT-SIZE="14"><B>EXECUTION</B></FONT><FONT POINT-SIZE="10" COLOR="#666">  OpenShift  (manual scripts / auto_runner)</FONT>>
         labeljust=l
         style="rounded,filled"
         fillcolor="#fef8e1"
@@ -127,7 +122,7 @@ digraph architecture {
         margin=20
 
         subgraph cluster_cluster_pipeline {
-            label=<<FONT POINT-SIZE="12"><B>Cluster Pipeline</B></FONT><FONT POINT-SIZE="9" COLOR="#666">  single flat pipeline, all tasks direct entries</FONT>>
+            label=<<FONT POINT-SIZE="12"><B>Run</B></FONT><FONT POINT-SIZE="9" COLOR="#666">  setup → tests → teardown, in test suite list order</FONT>>
             labeljust=l
             style="rounded,filled"
             fillcolor="#fdf0c8"
@@ -168,14 +163,14 @@ digraph architecture {
                     <TR><TD COLSPAN="3" BGCOLOR="#354999" CELLPADDING="12">
                         <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4">
                             <TR><TD><FONT COLOR="white" POINT-SIZE="14"><B>4</B></FONT></TD>
-                                <TD><FONT COLOR="white" POINT-SIZE="12"><B>  Test Task Chains</B></FONT></TD>
+                                <TD><FONT COLOR="white" POINT-SIZE="12"><B>  Test Execution</B></FONT></TD>
                                 <TD><FONT COLOR="#9aa1cc" POINT-SIZE="10">  in test suite list order</FONT></TD></TR>
                         </TABLE>
                     </TD></TR>
                     <TR>
                         <TD BGCOLOR="#dde4f0" VALIGN="TOP">
                             <FONT POINT-SIZE="11"><B>scope: node</B></FONT><BR/>
-                            <FONT POINT-SIZE="10" COLOR="#555">parallel task chains<BR/>(one per node)</FONT><BR/><BR/>
+                            <FONT POINT-SIZE="10" COLOR="#555">parallel per node</FONT><BR/><BR/>
                             <FONT FACE="Courier" POINT-SIZE="9">deploy DAG → wait<BR/>→ run steps/sweep<BR/>→ teardown DAG</FONT>
                         </TD>
                         <TD BGCOLOR="#dde4f0" VALIGN="TOP">
@@ -190,14 +185,14 @@ digraph architecture {
                         </TD>
                     </TR>
                     <TR><TD COLSPAN="3">
-                        <FONT POINT-SIZE="10" COLOR="#555">each test ends with a guard task (fan-in sync point)</FONT><BR/>
+                        <FONT POINT-SIZE="10" COLOR="#555">the runner enforces onFailure after each test</FONT><BR/>
                         <FONT POINT-SIZE="10" COLOR="#555">per-test onFailure: continue | skipTest | abort</FONT>
                     </TD></TR>
                 </TABLE>
             >]
 
             subgraph cluster_finally {
-                label=<<FONT POINT-SIZE="11"><I>finally</I></FONT>>
+                label=<<FONT POINT-SIZE="11"><I>teardown (always runs)</I></FONT>>
                 labeljust=l
                 style="rounded,dashed"
                 fillcolor="#fdf0c8"
@@ -258,7 +253,7 @@ digraph architecture {
             </TD></TR>
             <TR><TD ALIGN="LEFT">
                 <FONT FACE="Courier" POINT-SIZE="10">
-&lt;basePath&gt;/&lt;pipeline-run-name&gt;/<BR ALIGN="LEFT"/>
+&lt;basePath&gt;/&lt;run-id&gt;/<BR ALIGN="LEFT"/>
 ├── binaries/&lt;test&gt;/test.bin<BR ALIGN="LEFT"/>
 ├── &lt;step_name&gt;/              <FONT COLOR="#666"># flat, one per step</FONT><BR ALIGN="LEFT"/>
 │     junit.xml, benchmarks<BR ALIGN="LEFT"/>

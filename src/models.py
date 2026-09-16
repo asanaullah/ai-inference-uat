@@ -26,8 +26,6 @@ class ToolConfig(BaseModel):
     aggregator_timeout: int = Field(120, alias="aggregatorTimeout")
     deploy_timeout: int = Field(600, alias="deployTimeout")
     default_test_timeout: int = Field(600, alias="defaultTestTimeout")
-    pipeline_timeout: int = Field(7200, alias="pipelineTimeout")
-    finally_timeout: int = Field(900, alias="finallyTimeout")
     ginkgo_version: str = Field("v2.32.0", alias="ginkgoVersion")
 
 

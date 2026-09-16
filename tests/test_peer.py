@@ -7,7 +7,6 @@ import yaml
 from src.cluster import compute_cluster_steps
 from src.common import create_jinja_env
 from src.models import (
-    ClusterTestSpec,
     LoadedTest,
     NodeSpec,
     TestSpec,
@@ -16,7 +15,6 @@ from src.models import (
 from src.node import compute_node_steps
 from src.project import compute_project_steps
 from src.writers.manual import _derive_manual_script
-from src.writers.tekton import _render_tekton_task
 
 TC_DATA = {
     "oseCLIImage": "ose:latest",
@@ -41,18 +39,6 @@ def env():
 @pytest.fixture()
 def tc():
     return ToolConfig(**TC_DATA)
-
-
-@pytest.fixture()
-def cs():
-    return ClusterTestSpec(
-        nodes=[
-            {"name": "wrk-1", "componentValidation": {"sanity": {"nvidia.com/gpu": 4}}}
-        ],
-        namespace=NAMESPACE,
-        peerNamespace=PEER_NAMESPACE,
-        storage={"pvc": "pvc", "basePath": "results"},
-    )
 
 
 def _node(name="wrk-1", gpu_count=4):
@@ -359,54 +345,6 @@ class TestManualPeerNamespace:
         effective_ns = step.namespace or NAMESPACE
         script = _derive_manual_script(step, env, effective_ns)
         assert f"-n {NAMESPACE}" in script
-
-
-# -- Tekton writer uses per-step namespace ------------------------------------
-
-
-class TestTektonPeerNamespace:
-    def _manifest(self):
-        return (
-            "apiVersion: v1\nkind: Pod\nmetadata:\n  name: test-pod\n  namespace: ns\n"
-        )
-
-    def test_apply_task_uses_peer_namespace(self, env, tc, cs):
-        from src.models import Step
-
-        step = Step(
-            name="s",
-            type="command",
-            config={"command": "apply", "probe": "wait-ready", "pod_name": "p"},
-            namespace=PEER_NAMESPACE,
-        )
-        out = _render_tekton_task(step, self._manifest(), "s", [], tc, cs, env)
-        doc = yaml.safe_load(out)
-        assert doc["metadata"]["namespace"] == PEER_NAMESPACE
-
-    def test_delete_task_uses_peer_namespace(self, env, tc, cs):
-        from src.models import Step
-
-        step = Step(
-            name="s",
-            type="command",
-            config={"command": "delete", "selector": "app=x"},
-            namespace=PEER_NAMESPACE,
-        )
-        out = _render_tekton_task(step, "", "s", [], tc, cs, env)
-        assert PEER_NAMESPACE in out
-
-    def test_no_peer_uses_main_namespace(self, env, tc, cs):
-        from src.models import Step
-
-        step = Step(
-            name="s",
-            type="command",
-            config={"command": "apply", "probe": "wait-ready", "pod_name": "p"},
-            namespace="",
-        )
-        out = _render_tekton_task(step, self._manifest(), "s", [], tc, cs, env)
-        doc = yaml.safe_load(out)
-        assert doc["metadata"]["namespace"] == NAMESPACE
 
 
 # -- End-to-end: compute steps then verify manual scripts ---------------------
