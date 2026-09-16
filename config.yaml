@@ -12,5 +12,3 @@ builderTimeout: 300
 aggregatorTimeout: 120
 deployTimeout: 600
 defaultTestTimeout: 600
-pipelineTimeout: 7200
-finallyTimeout: 900

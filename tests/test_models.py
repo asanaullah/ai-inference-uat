@@ -73,8 +73,6 @@ class TestToolConfig:
         assert tc.aggregator_timeout == 120
         assert tc.deploy_timeout == 600
         assert tc.default_test_timeout == 600
-        assert tc.pipeline_timeout == 7200
-        assert tc.finally_timeout == 900
 
     def test_missing_required_field(self):
         with pytest.raises(ValidationError):

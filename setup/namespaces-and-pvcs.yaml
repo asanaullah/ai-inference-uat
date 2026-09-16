@@ -87,6 +87,9 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "watch"]
@@ -136,6 +139,9 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -247,4 +253,135 @@ subjects:
 roleRef:
   kind: ClusterRole
   name: uat-admin-cluster-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# ---- uat-runner Namespace ----
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: uat-runner
+  labels:
+    massopen.cloud/project: "true"
+---
+# ---- uat-runner PVC (repo clone, build outputs, per-run logs + metadata) ----
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: uat-runner-storage
+  namespace: uat-runner
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: pure-fb-nfsv4
+  resources:
+    requests:
+      storage: 100Gi
+---
+# ---- uat-runner bin PVC (holds the oc binary staged by the init container) ----
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: uat-runner-bin
+  namespace: uat-runner
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: pure-fb-nfsv4
+  resources:
+    requests:
+      storage: 2Gi
+---
+# ---- uat-runner ServiceAccount (drives runs unattended) ----
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: uat-runner-sa
+  namespace: uat-runner
+---
+# ---- uat-runner self-namespace Role (inspect its own runner pod + config) ----
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: uat-runner-role
+  namespace: uat-runner
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: uat-runner-sa-self-binding
+  namespace: uat-runner
+subjects:
+  - kind: ServiceAccount
+    name: uat-runner-sa
+    namespace: uat-runner
+roleRef:
+  kind: Role
+  name: uat-runner-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# ---- uat-runner operator Role (human launches/inspects the runner pod) ----
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: uat-runner-user-role
+  namespace: uat-runner
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: uat-runner-user-binding
+  namespace: uat-runner
+subjects:
+  - kind: User
+    name: asanaull@redhat.com
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: uat-runner-user-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# ---- Bind uat-runner-sa to the test-user role in each target namespace ----
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: uat-runner-sa-project-binding
+  namespace: uat-project
+subjects:
+  - kind: ServiceAccount
+    name: uat-runner-sa
+    namespace: uat-runner
+roleRef:
+  kind: Role
+  name: uat-user-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: uat-runner-sa-peer-binding
+  namespace: uat-peer
+subjects:
+  - kind: ServiceAccount
+    name: uat-runner-sa
+    namespace: uat-runner
+roleRef:
+  kind: Role
+  name: uat-user-role
   apiGroup: rbac.authorization.k8s.io

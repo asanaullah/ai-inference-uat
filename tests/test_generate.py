@@ -9,12 +9,6 @@ from src.step_generator import (
     compute_teardown_steps,
 )
 from src.writers.manual import _derive_manual_script
-from src.writers.tekton import (
-    _build_generate_lookup,
-    _find_step,
-    _render_tekton_task,
-    _resolve_manifest,
-)
 
 # -- Fixtures -----------------------------------------------------------------
 
@@ -58,34 +52,6 @@ def _test(name="t"):
         dag=[{"name": "run", "image": "img", "labelFilter": "pass-fail"}],
     )
     return LoadedTest(name=name, spec=spec, go_source="src", test_id="t1")
-
-
-# -- Helpers ------------------------------------------------------------------
-
-
-class TestHelpers:
-    def test_build_generate_lookup(self):
-        steps = [
-            Step(name="a", type="generate", config={}, content="x"),
-            Step(name="b", type="command", config={}),
-        ]
-        assert _build_generate_lookup(steps) == {"a": "x"}
-
-    def test_resolve_manifest(self):
-        lookup = {"gen": "manifest-content"}
-        step = Step(name="cmd", type="command", config={}, source=["gen"])
-        assert _resolve_manifest(step, lookup) == "manifest-content"
-
-    def test_resolve_manifest_no_source(self):
-        assert _resolve_manifest(Step(name="x", type="command", config={}), {}) == ""
-
-    def test_find_step(self):
-        steps = [
-            Step(name="a", type="generate", config={}),
-            Step(name="a", type="command", config={}),
-        ]
-        assert _find_step(steps, "a", "command").type == "command"
-        assert _find_step(steps, "z", "command") is None
 
 
 # -- _derive_manual_script ----------------------------------------------------
@@ -149,71 +115,6 @@ class TestDeriveManualScript:
         )
         script = _derive_manual_script(step, env, "test-ns")
         assert "oc apply -f manifests/my-manifest.yaml -n test-ns" in script
-
-
-# -- _render_tekton_task ------------------------------------------------------
-
-
-class TestRenderTektonTask:
-    def _manifest(self):
-        return (
-            "apiVersion: v1\nkind: Pod\nmetadata:\n  name: test-pod\n  namespace: ns\n"
-        )
-
-    def test_apply_wait_ready(self, env, tc, cs):
-        step = Step(
-            name="s",
-            type="command",
-            config={
-                "command": "apply",
-                "probe": "wait-ready",
-                "pod_name": "p",
-            },
-        )
-        out = _render_tekton_task(step, self._manifest(), "s", [], tc, cs, env)
-        assert "apiVersion: tekton.dev" in out
-        assert "wait" in out.lower()
-
-    def test_exec(self, env, tc, cs):
-        step = Step(
-            name="s",
-            type="command",
-            config={
-                "command": "exec",
-                "target": "pod",
-            },
-        )
-        out = _render_tekton_task(step, "", "s", ["bash", "/run.sh"], tc, cs, env)
-        assert "oc exec" in out
-
-    def test_delete(self, env, tc, cs):
-        step = Step(
-            name="s",
-            type="command",
-            config={
-                "command": "delete",
-                "selector": "app=x",
-            },
-        )
-        out = _render_tekton_task(step, "", "s", [], tc, cs, env)
-        assert "app=x" in out
-
-    def test_delete_all(self, env, tc, cs):
-        step = Step(
-            name="s",
-            type="command",
-            config={
-                "command": "delete-all",
-                "configmap_name": "cm",
-            },
-        )
-        out = _render_tekton_task(step, "", "s", [], tc, cs, env)
-        assert "oc delete" in out
-
-    def test_unknown_command_raises(self, env, tc, cs):
-        step = Step(name="s", type="command", config={"command": "bad"})
-        with pytest.raises(ValueError, match="Unknown command"):
-            _render_tekton_task(step, "", "s", [], tc, cs, env)
 
 
 # -- compute_setup_steps / compute_teardown_steps -----------------------------

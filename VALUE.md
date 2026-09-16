@@ -10,9 +10,9 @@
 
 1. **Separate what varies.** The things that change between deployments are different from the things that change between tests. Cluster details like node names, GPU counts, and storage live in one file. Test logic lives in another. Which tests to run and in what order lives in a third. When you move to a new cluster, you update one file. When you add a new test, you don't touch the cluster config.
 
-2. **One list, multiple outputs.** The generator computes one ordered list of steps from these inputs. From that same list, it produces manual scripts and Tekton pipelines independently. If we need to support another execution backend later, we write a new writer. Step computation doesn't change.
+2. **One list, multiple outputs.** The generator computes one ordered list of steps from these inputs. From that same list, it produces the executable output through a writer. If we need to support another execution backend later, we write a new writer. Step computation doesn't change.
 
-3. **Three test scopes.** Tests can run per-node in parallel, across specific sets of nodes, or at the project level with no node affinity. All three can be mixed in a single test suite. A hardware validation test can run on every node, followed by a network bandwidth test across node pairs, followed by a namespace-level RBAC check, all in one pipeline.
+3. **Three test scopes.** Tests can run per-node in parallel, across specific sets of nodes, or at the project level with no node affinity. All three can be mixed in a single test suite. A hardware validation test can run on every node, followed by a network bandwidth test across node pairs, followed by a namespace-level RBAC check, all in one suite.
 
 4. **Suites and libraries.** Test suites and test libraries are separate. A platform team can maintain a shared library of validated tests. An admin can have a private library with privileged diagnostics. Each team composes their own suite from whatever libraries they need, with their own scopes, failure policies, and RBAC.
 
@@ -22,7 +22,7 @@
 
 7. **Proper test framework.** Tests are written in Ginkgo, not shell scripts checking exit codes. You get structured specs, labeled test cases, built-in JUnit XML output, proper assertions, and the ability to report quantitative metrics alongside pass/fail results. The source compiles into a single binary with no runtime dependencies on the test pod.
 
-8. **Per-test failure policies.** Each test declares what should happen when something fails: continue running, skip the rest of this test, or abort the whole suite. Guard tasks fan in after every test and enforce the policy. Cleanup and teardown always run regardless.
+8. **Per-test failure policies.** Each test declares what should happen when something fails: continue running, skip the rest of this test, or abort the rest of the run. The runner enforces the policy after every test; on abort it skips the remaining tests and goes straight to teardown. Cleanup and teardown always run regardless.
 
 9. **Deploy once, sweep many.** GPU-backed servers deploy once and stay up through the entire parameter sweep. When an ephemeral test pod finishes, its resources are released immediately so the next sweep entry can use those GPUs. You don't redeploy the server between benchmark configurations.
 
@@ -30,11 +30,11 @@
 
 11. **Namespace isolation.** Cross-namespace tests get independent infrastructure in each namespace. Kubernetes isolation boundaries stay intact. Teardown is split per namespace so cleanup selectors don't cross boundaries.
 
-12. **Editable step list.** The computed step list is serialized to steps.json. You can inspect it, edit it, add or remove steps, and re-run the writers without recomputing from definitions.
+12. **Editable step list.** The computed step list is serialized to steps.json. You can inspect it, edit it, add or remove steps, and re-run the writer without recomputing from definitions.
 
 13. **Tests as recipes.** The same YAML that defines a test also describes how to deploy the workload. The vLLM, KServe, llm-d, and Jupyter test definitions are working deployment recipes that someone can use as a starting point for their own workloads.
 
-14. **Unified naming.** One naming convention (test ID, test name, node or set, DAG step) serves as pod name, PVC directory, script filename, and Tekton task name. Results are traceable end to end and collisions across nodes, sets, and sweep entries are structurally impossible.
+14. **Unified naming.** One naming convention (test ID, test name, node or set, DAG step) serves as pod name, PVC directory, and script filename. Results are traceable end to end and collisions across nodes, sets, and sweep entries are structurally impossible.
 
 15. **One binary per test.** The same compiled binary handles all parameter sweep entries and all nodes. Different runtime config, same test logic. No redundant compilation.
 
@@ -48,12 +48,10 @@
 
 1. All test source is delivered via a single ConfigMap, which has a 1MB Kubernetes limit. The current test library fits comfortably, but a significantly larger one would hit it. The mitigation is splitting across multiple suites or revisiting the delivery mechanism.
 
-2. The builder pod has a fixed name, so only one pipeline can run at a time in a given namespace.
+2. The builder pod has a fixed name, so only one run can execute at a time in a given namespace.
 
 3. Parameter sweep entries run sequentially, not in parallel. Each entry gets its own pod against the same persistent server.
 
 4. Cluster-scoped tests with permutation placement can produce factorial numbers of node sets. 10 nodes with setSize 3 produces 720 permutations. setCutoff and combination mode exist to bound this.
 
 5. Resource steps deploy arbitrary CRDs but can't inject nodeSelector because the path to nodeSelector differs by resource kind. The KServe test is restricted to project scope because of this.
-
-6. Tekton execution is generated but not yet tested end to end.

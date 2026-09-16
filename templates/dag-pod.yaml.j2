@@ -28,7 +28,7 @@ spec:
   tolerations:
     - key: nvidia.com/gpu.product
       operator: Exists
-      effect: NoSchedule
+      effect: NoExecute
 {% if privileged %}
   hostPID: true
 {% endif %}
@@ -118,6 +118,9 @@ spec:
         - name: workspace
           mountPath: /binaries
           subPath: {{ binaries_subpath }}
+        - name: workspace
+          mountPath: /uat_scratchpad
+          subPath: {{ scratchpad_subpath }}
 {% if models_storage and models_storage.pvc %}
         - name: models
           mountPath: /models

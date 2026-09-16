@@ -6,7 +6,7 @@
 #
 # For every (node x image) pair it launches a throwaway pod that overrides the
 # entrypoint with `true` and exits immediately. The pods request no GPUs but
-# tolerate the GPU node taint (nvidia.com/gpu.product:NoSchedule) and pin to a
+# tolerate the GPU node taint (nvidia.com/gpu.product:NoExecute) and pin to a
 # specific node, so the kubelet on that node must pull and cache the image before
 # the container can run. Once every pod has completed (image cached), the pods
 # are deleted.
@@ -104,7 +104,7 @@ spec:
   tolerations:
     - key: nvidia.com/gpu.product
       operator: Exists
-      effect: NoSchedule
+      effect: NoExecute
   restartPolicy: Never
   containers:
     - name: prewarm

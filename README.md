@@ -1,6 +1,6 @@
 <!-- Assisted by Claude Opus -->
 # AI Inference UAT Harness
-A declarative test harness that generates Kubernetes manifests from test definitions. Given a cluster configuration (target nodes, namespace, and storage) and a test suite, the generator produces both manually-executable manifests, as well as Tekton pipeline manifests for automated execution on OpenShift.
+A declarative test harness that generates Kubernetes manifests from test definitions. Given a cluster configuration (target nodes, namespace, and storage) and a test suite, the generator produces manually-executable manifests and numbered shell scripts that can be run interactively or driven headlessly on OpenShift.
 
 ## Table of Contents
 
@@ -18,7 +18,6 @@ A declarative test harness that generates Kubernetes manifests from test definit
   - [Generate Manifests](#generate-manifests)
   - [CLI Options](#cli-options)
   - [Run Manually](#run-manually)
-  - [Run with Tekton (untested)](#run-with-tekton-untested)
 - [Adding a Custom Test](#adding-a-custom-test)
 - [Test Definition Reference](#test-definition-reference)
   - [DAG Steps](#dag-steps)
@@ -38,32 +37,26 @@ A declarative test harness that generates Kubernetes manifests from test definit
 
 ## How It Works
 
-The generator reads test definitions (YAML + Go source), a cluster config describing target nodes, and a tool config. It produces two equivalent output formats from the same internal representation:
+The generator reads test definitions (YAML + Go source), a cluster config describing target nodes, and a tool config. It produces its output from an ordered internal step list:
 
-- **Manual output** (`build/manual/`) — numbered shell scripts in execution order, plus a `manifests/` subdirectory with the YAML manifests they reference. Run the scripts in order with `bash`.
+- **Manual output** (`build/manual/`) — numbered shell scripts in execution order, plus a `manifests/` subdirectory with the YAML manifests they reference. Run the scripts in order with `bash`, drive them interactively with `scripts/manual_runner.py`, or run the whole suite headlessly with `scripts/auto_runner.py`.
 
-- **Tekton output** (`build/tekton/`) — a single flat Tekton Pipeline with all tasks as direct entries, plus a PipelineRun. Pod manifests are embedded directly in task scripts. Apply the entire directory to run the full suite automatically.
-
-Both outputs are derived from the same ordered step list, ensuring the underlying Kubernetes workloads (pods, services, configmaps) are equivalent regardless of execution method.
+The output is derived from an ordered step list, so the underlying Kubernetes workloads (pods, services, configmaps) are consistent regardless of how the scripts are driven.
 
 
 ```
-                                                                    ┌→ Manual Manifests
-Test Definitions (YAML + Go) + Node List → python -m src → Steps ──┤                     → OpenShift Execution → Results on PVC
-                                              ↑                     └→ Tekton Manifests
-                                              │
+Test Definitions (YAML + Go) + Node List → python -m src → Steps → Manual Manifests → OpenShift Execution → Results on PVC
+                                              ↑
                                        steps.json (optional re-entry point)
 ```
 
 ### Generation
 
-The generator separates step computation (what to run) from writers (how to run it). Writers are independent consumers of the same step list, so adding a new execution backend means writing a new writer — step computation doesn't change.
+The generator separates step computation (what to run) from the writer (how to run it). A writer is an independent consumer of the step list, so adding a new execution backend means writing a new writer — step computation doesn't change.
 
-1. **Step computation** — converts test definitions into a flat, ordered list of steps. Each step is either a resource to create (pod manifest, optionally bundled with a service, or an arbitrary Kubernetes resource manifest) or an action to execute (apply a manifest, exec into a pod, delete resources). Ordering is implicit in list position. Both output layers consume the same step list.
+1. **Step computation** — converts test definitions into a flat, ordered list of steps. Each step is either a resource to create (pod manifest, optionally bundled with a service, or an arbitrary Kubernetes resource manifest) or an action to execute (apply a manifest, exec into a pod, delete resources). Ordering is implicit in list position. The writer consumes this step list.
 
 2. **Manual writer** — writes the steps as standalone files to `build/manual/`, organized by phase (setup, test, teardown). Numbered `.sh` scripts in `manual/` are what the operator runs in order. Manifests are written to `manual/manifests/` as data files — each apply script references its manifest via `oc apply -f manifests/<name>.yaml`.
-
-3. **Tekton writer** — derives Tekton Tasks and a single flat Pipeline from the same steps. Pod manifests are embedded directly in Tekton Task scripts, so `build/tekton/` is self-contained. The writer assigns `onError` values, `when` guards, and guard tasks based on each test's failure policy.
 
 ### Intermediate DAG (steps.json)
 
@@ -72,10 +65,10 @@ After step computation and before writing output, the generator serializes the f
 The generator can also consume `steps.json` as input via `--steps`, skipping config loading and step computation entirely:
 
 ```bash
-# Normal: compute steps from config, write steps.json + manual + tekton
+# Normal: compute steps from config, write steps.json + manual
 python -m src --test-suite examples/all_tests.yaml --test-lib test_lib --cluster cluster/ocp-test.yaml
 
-# From steps: load steps.json, write manual + tekton
+# From steps: load steps.json, write manual
 python -m src --steps build/steps.json
 ```
 
@@ -90,33 +83,33 @@ The file is validated on load with Pydantic (field types, metadata structure) an
 ### Execution Flow
 
 ```
-Cluster Pipeline (single flat pipeline):
+Run order (single ordered step list):
   Setup:    apply-configmap → create-builder → build
   Tests:    [tests in test suite list order]
-              node-scoped: parallel task chains (one per node), chained via runAfter
-              cluster-scoped: one task chain per node set (sequential)
-              project-scoped: single task chain (no node affinity)
-              each test ends with a guard task (fan-in sync point)
-  Finally:  create-aggregator → aggregate → cleanup
+              node-scoped: parallel per node
+              cluster-scoped: one sequence per node set (sequential)
+              project-scoped: single sequence (no node affinity)
+  Teardown: create-aggregator → aggregate → cleanup  (always runs)
 ```
 
-Each test produces one or more task chains depending on scope: one per node (node-scoped, parallel, pinned via `nodeSelector`), one per node set (cluster-scoped, sequential, pinned via `nodeSelector`), or a single chain (project-scoped, no `nodeSelector`). All chains follow the same lifecycle:
+Each test produces one or more step sequences depending on scope: one per node (node-scoped, parallel, pinned via `nodeSelector`), one per node set (cluster-scoped, sequential, pinned via `nodeSelector`), or a single sequence (project-scoped, no `nodeSelector`). All sequences follow the same lifecycle:
 
 ```
-Task chain per node:
+Sequence per node:
   resource:   apply arbitrary K8s resource (e.g. InferencePool)
   persistent: deploy pod, wait for readiness (stays up)
   ephemeral:  run test pod → cleanup (per sweep entry, releases resources)
   after all DAG steps: teardown persistent + resource-step resources
-  finally-teardown: safety-net (always runs, no when guard)
-Guard task: fans in after all nodes' chains, checks for failures
+  finally-teardown: safety-net (always runs)
 ```
+
+After each test completes, the runner checks for failures and applies the test's failure policy.
 
 ### Test Scopes
 
 Tests are organized into three scopes based on where and how they run:
 
-- **Node** — validates individual nodes in isolation. Each node-scoped test runs independently on every target node listed in the cluster config, pinned via `nodeSelector`. All node task chains execute in parallel. Use for hardware validation, GPU diagnostics, driver checks, and single-node inference benchmarks.
+- **Node** — validates individual nodes in isolation. Each node-scoped test runs independently on every target node listed in the cluster config, pinned via `nodeSelector`. All node sequences execute in parallel. Use for hardware validation, GPU diagnostics, driver checks, and single-node inference benchmarks.
 
 - **Cluster** — validates behavior that spans multiple nodes but still requires node pinning. Cluster-scoped tests use a `placement` config to filter eligible nodes, generate node sets (combinations or permutations), and pin each DAG step to a specific node within the set. Sets run sequentially — each completes fully before the next begins. Use for multi-node coordination tests like distributed training, inter-node networking, or GPU-to-GPU communication across nodes.
 
@@ -146,9 +139,9 @@ spec:
 ```
 
 The `onFailure` field controls what happens when a step within the test fails (default: `continue`):
-- `continue` — all steps run regardless of failures. Guard task proceeds to the next test.
-- `skipTest` — remaining steps in the failing test's chain are skipped (teardown still runs). Guard task proceeds to the next test. For node-scoped tests, only the failing node's chain is skipped; other nodes complete normally.
-- `abort` — remaining steps in the failing test's chain are skipped. Guard task halts the pipeline. For node-scoped tests, only the failing node's chain is skipped; other nodes complete normally before the pipeline stops.
+- `continue` — all steps run regardless of failures. The runner proceeds to the next test.
+- `skipTest` — remaining steps in the failing test's sequence are skipped (teardown still runs). The runner proceeds to the next test. For node-scoped tests, only the failing node's sequence is skipped; other nodes complete normally.
+- `abort` — remaining steps in the failing test's sequence are skipped, then the runner skips every remaining test and goes straight to teardown/cleanup. For node-scoped tests, only the failing node's sequence is skipped; other nodes complete normally before the run moves on to cleanup.
 
 The optional `timeout` field (integer, seconds) overrides the `defaultTestTimeout` from `config.yaml` for this test's ephemeral pods.
 
@@ -233,7 +226,7 @@ setup/prewarm-images.sh cluster/ocp-test.yaml
 - A PVC with **ReadWriteMany (RWX)** access mode (e.g. CephFS, NFS). Multi-node runs pin pods to different nodes that share one PVC — RWO block storage will fail at scheduling.
 - A separate RWX PVC for model weights, referenced via `storage.models.pvc` in the cluster config (see [Cluster Setup](#cluster-setup))
 - Nodes labeled with `kubernetes.io/hostname`
-- For Tekton: a service account with permissions to create/delete pods, services, and configmaps, and to exec into pods in the target namespace
+- For headless runs: a service account with permissions to create/delete pods, services, and configmaps, and to exec into pods in the target namespace
 
 ### Install
 
@@ -253,7 +246,7 @@ python -m src \
   --scripts-dir scripts
 ```
 
-Output is written to `build/manual/` and `build/tekton/`.
+Output is written to `build/manual/`.
 
 ### CLI Options
 
@@ -306,18 +299,6 @@ For running a suite interactively rather than script-by-script, `scripts/manual_
 
 ```bash
 python3 scripts/manual_runner.py build
-```
-
-### Run with Tekton (untested)
-
-```bash
-oc apply -f build/tekton/
-```
-
-This creates all Tasks, the cluster Pipeline, and triggers a PipelineRun. Monitor with:
-
-```bash
-oc get pipelineruns -w
 ```
 
 ## Adding a Custom Test
@@ -582,7 +563,7 @@ The optional `storage.models` section configures a separate volume for pre-downl
 
 The `peerNamespace` field names a second namespace for cross-namespace tests. DAG steps with `peer: true` deploy to this namespace. When present, the generator creates independent infrastructure (ConfigMap, builder pod, aggregator pod) in the peer namespace. The optional `peerStorage` section configures the peer namespace's PVC, base path, and models volume; when omitted, the primary `storage` config is used for both namespaces.
 
-The `name` field is the value matched against the `nodeSelectorKey` label (default: `kubernetes.io/hostname`). It is also used in step names for human readability. For Kubernetes resource names (pods, services, Tekton tasks), the node name becomes the fixed-width `<node>` field of `build_resource_name()` via `fit(node, 10)`: it is lowercased and sanitized (invalid characters replaced with dashes), and if the result exceeds 10 characters it is truncated to 5 characters with a 4-character hash suffix. Short, simple names like `wrk-4` are used as-is; FQDN hostnames like `ip-10-0-1-42.ec2.internal` are automatically shortened.
+The `name` field is the value matched against the `nodeSelectorKey` label (default: `kubernetes.io/hostname`). It is also used in step names for human readability. For Kubernetes resource names (pods, services), the node name becomes the fixed-width `<node>` field of `build_resource_name()` via `fit(node, 10)`: it is lowercased and sanitized (invalid characters replaced with dashes), and if the result exceeds 10 characters it is truncated to 5 characters with a 4-character hash suffix. Short, simple names like `wrk-4` are used as-is; FQDN hostnames like `ip-10-0-1-42.ec2.internal` are automatically shortened.
 
 All fields under `componentValidation` are available in Jinja2 templates. Resource keys in the sanity dict use actual Kubernetes resource names (e.g. `nvidia.com/gpu`, `cpu`, `memory`) so they match resource requests in DAG steps directly. The `resourceNames` sub-dict maps resource keys to hardware model names for component validation.
 
@@ -604,8 +585,6 @@ builderTimeout: 300
 aggregatorTimeout: 120
 deployTimeout: 600
 defaultTestTimeout: 600
-pipelineTimeout: 7200
-finallyTimeout: 900
 ```
 
 All timeout values are integers in seconds.
@@ -779,7 +758,7 @@ dag:
 
 ### Custom Templates
 
-The `--templates-dir` CLI arg loads all Jinja2 templates from a custom directory. Copy the default `templates/` directory and modify any template to change the generated manifests — for example, to target a different Kubernetes distribution, add custom annotations, or change the Tekton task structure.
+The `--templates-dir` CLI arg loads all Jinja2 templates from a custom directory. Copy the default `templates/` directory and modify any template to change the generated manifests — for example, to target a different Kubernetes distribution, add custom annotations, or change the pod structure.
 
 ```bash
 cp -r templates/ my-templates/
@@ -883,11 +862,11 @@ src/
   models.py           Pydantic schemas and dataclasses
   writers/
     manual.py         Manual writer (numbered shell scripts + YAML manifests)
-    tekton.py         Tekton writer (Tasks, Pipeline, PipelineRun)
 tests/                Unit and integration tests
 scripts/
   aggregate.py        JUnit XML aggregation (deployed via ConfigMap)
   manual_runner.py    Curses dashboard for running a suite interactively from build/
+  auto_runner.py      Headless driver that runs a suite unattended from build/
 setup/
   namespaces-and-pvcs.yaml    Namespaces (uat-project, uat-peer, uat-admin), PVCs, and RBAC
   uat-models-pvc.yaml         PVC for model storage
@@ -895,7 +874,7 @@ setup/
   allow-intra-namespace.yaml  NetworkPolicies enabling same-namespace pod-to-pod traffic
   prewarm-images.sh           Pre-pulls test-library images onto each GPU node
 templates/
-  *.yaml.j2           Jinja2 templates for Kubernetes/Tekton manifests
+  *.yaml.j2           Jinja2 templates for Kubernetes manifests
   resource.yaml.j2    Generic template for arbitrary K8s resources (resource steps)
   *.sh.j2             Jinja2 templates for shell scripts
 examples/
@@ -919,4 +898,4 @@ The generator delivers Go source, build scripts, cluster config, test suite conf
 
 - **Additional infrastructure.** The setup pod approach requires a Python image, network access to clone repos, `pip install` of dependencies, and a standalone `builder.py` script that duplicates test-suite parsing logic already in the generator. The ConfigMap approach has no runtime dependencies beyond `oc` and the Go toolchain.
 
-The ConfigMap approach has a **1MB size limit** (Kubernetes hard constraint). This is sufficient for the current test suite but may become a bottleneck if the number of tests grows significantly. If the limit is hit, the recommended mitigation is to split tests across multiple suite directories and run separate pipelines, or to revisit the Git clone approach with a mechanism to pin the exact commit the generator ran against.
+The ConfigMap approach has a **1MB size limit** (Kubernetes hard constraint). This is sufficient for the current test suite but may become a bottleneck if the number of tests grows significantly. If the limit is hit, the recommended mitigation is to split tests across multiple suite directories and run them as separate runs, or to revisit the Git clone approach with a mechanism to pin the exact commit the generator ran against.

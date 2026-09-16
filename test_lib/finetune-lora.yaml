@@ -1,0 +1,657 @@
+# Assisted by Claude Opus
+apiVersion: uat.openshift.io/v1
+kind: Test
+metadata:
+  name: finetune-lora
+  version: v0.1.0
+  description: >-
+    End-to-end multi-framework LoRA fine-tuning pipeline in a single DAG. A Kubeflow
+    PyTorchJob (torchrun/DDP) and a KubeRay RayJob (Ray Train) each LoRA fine-tune the
+    same base model across 2 GPUs and write their adapter to the shared
+    /uat_scratchpad. A gate step waits for both adapters, then a persistent vLLM server
+    loads the base model plus both adapters straight off the scratchpad, and a final
+    pass/fail pod queries the base model and each fine-tuned adapter to prove the trained
+    weights serve. The scratchpad is what lets the training steps hand their adapters to
+    the serving step — the DAG has no other way to share data between steps.
+  supportedScopes:
+    - project
+spec:
+  source:
+    ginkgo: finetune-lora.go
+
+  serverConfig:
+    # Base weights, staged read-only on the models PVC.
+    model: /models/Qwen/Qwen2.5-3B-Instruct
+    modelsPVC: uat-models
+    # Stock framework images; deps are installed at runtime (pip / Ray runtime-env),
+    # mirroring the oac-demo reference. Serving uses a vLLM image new enough for multi-LoRA.
+    trainImage: docker.io/pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
+    rayImage: docker.io/rayproject/ray-ml:2.20.0-py310-gpu
+    # Model ids the vLLM server exposes; the query step asks for each.
+    baseModelName: qwen-base
+    kubeflowAdapter: kubeflow
+    kuberayAdapter: kuberay
+    dataset: tatsu-lab/alpaca
+    maxSteps: "25"
+    loraRank: "16"
+    # GPUs each training job requests (2-way DDP / 2 Ray workers).
+    gpuCount: "2"
+    # Instruction-style prompt (the oac-demo "health" prompt) the quantitative step sends to
+    # the base model and both adapters to measure real generation, not just a 200 OK.
+    prompt: "Give three tips for staying healthy."
+
+  dag:
+    # 1) Kubeflow trainer. A PyTorchJob (Kubeflow Training Operator) runs the SFTTrainer LoRA
+    #    fine-tune across 2 GPUs (one torchrun rank per GPU) and writes the adapter to
+    #    /uat_scratchpad/kubeflow. The training script is embedded inline (no ConfigMap /
+    #    image build). Fire-and-forget: the DAG does not block on a CRD, so the wait-adapters
+    #    gate below is what serialises training before serving.
+    - name: train-kubeflow
+      resourceConfig:
+        apiVersion: kubeflow.org/v1
+        kind: PyTorchJob
+        spec:
+          nprocPerNode: '{{ serverConfig.gpuCount }}'
+          runPolicy:
+            cleanPodPolicy: None
+          pytorchReplicaSpecs:
+            Master:
+              replicas: 1
+              restartPolicy: Never
+              template:
+                metadata:
+                  labels:
+                    app.kubernetes.io/managed-by: uat-generator
+                spec:
+                  tolerations:
+                    - key: nvidia.com/gpu.product
+                      operator: Exists
+                      effect: NoExecute
+                  containers:
+                    - name: pytorch
+                      image: '{{ serverConfig.trainImage }}'
+                      env:
+                        - name: MODEL_PATH
+                          value: '{{ serverConfig.model }}'
+                        - name: DATASET
+                          value: '{{ serverConfig.dataset }}'
+                        - name: OUTPUT_DIR
+                          value: '{{ scratchpad.mountPath }}/{{ serverConfig.kubeflowAdapter }}'
+                        - name: MAX_STEPS
+                          value: '{{ serverConfig.maxSteps }}'
+                        - name: LORA_RANK
+                          value: '{{ serverConfig.loraRank }}'
+                        - name: HOME
+                          value: /tmp
+                        - name: HF_HOME
+                          value: /tmp/hf
+                        - name: NCCL_DEBUG
+                          value: WARN
+                      command:
+                        - bash
+                        - -c
+                        - |
+                          set -euo pipefail
+                          export PYTHONUSERBASE=/tmp/pip-user
+                          export PATH="$PYTHONUSERBASE/bin:$PATH"
+                          pip install --no-cache-dir --user \
+                            "transformers==4.46.3" "datasets==2.21.0" \
+                            "accelerate==1.1.1" "peft==0.13.2" "trl==0.12.1" \
+                            sentencepiece protobuf
+                          cat > /tmp/fine-tune.py <<'PYEOF'
+                          import math
+                          import os
+
+                          import torch
+                          from datasets import load_dataset
+                          from transformers import (
+                              AutoModelForCausalLM,
+                              AutoTokenizer,
+                              TrainingArguments,
+                          )
+                          from peft import LoraConfig
+                          from trl import SFTTrainer
+
+                          MODEL_PATH = os.environ["MODEL_PATH"]
+                          DATASET = os.environ["DATASET"]
+                          OUTPUT_DIR = os.environ["OUTPUT_DIR"]
+                          MAX_STEPS = int(os.environ.get("MAX_STEPS", "25"))
+                          EVAL_SAMPLES = int(os.environ.get("EVAL_SAMPLES", "200"))
+                          LEARNING_RATE = float(os.environ.get("LEARNING_RATE", "2e-4"))
+                          BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "8"))
+                          LORA_RANK = int(os.environ.get("LORA_RANK", "16"))
+                          MAX_SEQ_LENGTH = int(os.environ.get("MAX_SEQ_LENGTH", "2048"))
+
+                          LOCAL_RANK = int(os.environ.get("LOCAL_RANK", "0"))
+                          is_main = LOCAL_RANK == 0
+
+                          def log(*a):
+                              if is_main:
+                                  print(*a, flush=True)
+
+                          if is_main:
+                              n = torch.cuda.device_count()
+                              names = ", ".join(torch.cuda.get_device_name(i) for i in range(n))
+                              log(f"[setup] world_size={os.environ.get('WORLD_SIZE')} gpus={n} ({names})")
+
+                          tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+                          if tokenizer.pad_token is None:
+                              tokenizer.pad_token = tokenizer.eos_token
+
+                          dataset = load_dataset(DATASET, split="train")
+
+                          def format_instruction(example):
+                              instr = example.get("instruction", "")
+                              if example.get("input"):
+                                  instr += "\n" + example["input"]
+                              messages = [
+                                  {"role": "user", "content": instr},
+                                  {"role": "assistant", "content": example.get("output", "")},
+                              ]
+                              return {"text": tokenizer.apply_chat_template(messages, tokenize=False)}
+
+                          dataset = dataset.map(format_instruction, remove_columns=list(dataset.features))
+                          split = dataset.train_test_split(test_size=EVAL_SAMPLES, seed=42)
+                          train_ds, eval_ds = split["train"], split["test"]
+                          log(f"[data] train={len(train_ds)} eval={len(eval_ds)} from {DATASET}")
+
+                          log(f"[model] loading {MODEL_PATH}")
+                          model = AutoModelForCausalLM.from_pretrained(
+                              MODEL_PATH, torch_dtype=torch.bfloat16, trust_remote_code=True
+                          )
+                          model.config.use_cache = False
+
+                          lora_config = LoraConfig(
+                              r=LORA_RANK,
+                              lora_alpha=LORA_RANK * 2,
+                              target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                                              "gate_proj", "up_proj", "down_proj"],
+                              lora_dropout=0.05,
+                              bias="none",
+                              task_type="CAUSAL_LM",
+                          )
+
+                          training_args = TrainingArguments(
+                              output_dir="/tmp/sft-checkpoints",
+                              max_steps=MAX_STEPS,
+                              per_device_train_batch_size=BATCH_SIZE,
+                              per_device_eval_batch_size=BATCH_SIZE,
+                              gradient_accumulation_steps=1,
+                              learning_rate=LEARNING_RATE,
+                              warmup_ratio=0.03,
+                              lr_scheduler_type="cosine",
+                              logging_steps=10,
+                              eval_strategy="steps",
+                              eval_steps=max(1, MAX_STEPS // 2),
+                              save_strategy="no",
+                              bf16=True,
+                              gradient_checkpointing=True,
+                              gradient_checkpointing_kwargs={"use_reentrant": False},
+                              ddp_find_unused_parameters=False,
+                              disable_tqdm=True,
+                              report_to="none",
+                          )
+
+                          trainer = SFTTrainer(
+                              model=model,
+                              args=training_args,
+                              train_dataset=train_ds,
+                              eval_dataset=eval_ds,
+                              peft_config=lora_config,
+                              max_seq_length=MAX_SEQ_LENGTH,
+                              tokenizer=tokenizer,
+                              dataset_text_field="text",
+                              packing=True,
+                          )
+                          if is_main:
+                              trainer.model.print_trainable_parameters()
+
+                          log("[train] starting...")
+                          train_result = trainer.train()
+                          eval_loss = trainer.evaluate()["eval_loss"]
+                          log(f"[result] train_loss={train_result.metrics.get('train_loss'):.4f} "
+                              f"eval_loss={eval_loss:.4f} perplexity={math.exp(eval_loss):.2f}")
+
+                          log(f"[save] writing LoRA adapter to {OUTPUT_DIR}")
+                          trainer.save_model(OUTPUT_DIR)
+                          if trainer.is_world_process_zero():
+                              tokenizer.save_pretrained(OUTPUT_DIR)
+                              print("=== kubeflow fine-tune complete:", OUTPUT_DIR, "===", flush=True)
+                          PYEOF
+                          torchrun /tmp/fine-tune.py
+                      resources:
+                        requests:
+                          cpu: "8"
+                          memory: 48Gi
+                          nvidia.com/gpu: '{{ serverConfig.gpuCount }}'
+                        limits:
+                          nvidia.com/gpu: '{{ serverConfig.gpuCount }}'
+                      volumeMounts:
+                        - name: models
+                          mountPath: /models
+                          readOnly: true
+                        - name: scratchpad
+                          mountPath: '{{ scratchpad.mountPath }}'
+                          subPath: '{{ scratchpad.subPath }}'
+                        - name: shm
+                          mountPath: /dev/shm
+                  volumes:
+                    - name: models
+                      persistentVolumeClaim:
+                        claimName: '{{ serverConfig.modelsPVC }}'
+                    - name: scratchpad
+                      persistentVolumeClaim:
+                        claimName: '{{ scratchpad.pvc }}'
+                    - name: shm
+                      emptyDir:
+                        medium: Memory
+                        sizeLimit: 16Gi
+
+    # 2) Ray trainer. A KubeRay RayJob stands up an ephemeral Ray cluster (CPU head + a GPU
+    #    worker pod holding 2 GPUs), runs the same LoRA SFT via Ray Train's TorchTrainer (one
+    #    actor per GPU), writes the adapter to /uat_scratchpad/kuberay, and tears the cluster
+    #    down (shutdownAfterJobFinishes) to free the GPUs. The driver script is embedded in the
+    #    entrypoint; deps install via the Ray runtime-env. The version pins (torch cu121,
+    #    pyarrow<14, trl 0.11.4) are the ones the oac-demo proved on these H100 nodes.
+    - name: train-kuberay
+      resourceConfig:
+        apiVersion: ray.io/v1
+        kind: RayJob
+        spec:
+          shutdownAfterJobFinishes: true
+          ttlSecondsAfterFinished: 120
+          entrypoint: |
+            cat > /tmp/ft.py <<'PYEOF'
+            import math
+            import os
+
+            import ray
+            from ray.train import ScalingConfig, RunConfig
+            from ray.train.torch import TorchTrainer
+
+
+            def train_func(config):
+                import torch
+                from datasets import load_dataset
+                from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
+                from peft import LoraConfig
+                from trl import SFTTrainer
+                from ray import train
+                from ray.train.huggingface.transformers import prepare_trainer, RayTrainReportCallback
+
+                MODEL_PATH = os.environ["MODEL_PATH"]
+                DATASET = os.environ["DATASET"]
+                OUTPUT_DIR = os.environ["OUTPUT_DIR"]
+                MAX_STEPS = int(os.environ.get("MAX_STEPS", "25"))
+                EVAL_SAMPLES = int(os.environ.get("EVAL_SAMPLES", "200"))
+                LEARNING_RATE = float(os.environ.get("LEARNING_RATE", "2e-4"))
+                BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "8"))
+                LORA_RANK = int(os.environ.get("LORA_RANK", "16"))
+                MAX_SEQ_LENGTH = int(os.environ.get("MAX_SEQ_LENGTH", "2048"))
+
+                is_main = train.get_context().get_world_rank() == 0
+
+                def log(*a):
+                    if is_main:
+                        print(*a, flush=True)
+
+                log(f"[setup] world_size={train.get_context().get_world_size()}")
+
+                tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+                if tokenizer.pad_token is None:
+                    tokenizer.pad_token = tokenizer.eos_token
+
+                dataset = load_dataset(DATASET, split="train")
+
+                def format_instruction(example):
+                    instr = example.get("instruction", "")
+                    if example.get("input"):
+                        instr += "\n" + example["input"]
+                    messages = [
+                        {"role": "user", "content": instr},
+                        {"role": "assistant", "content": example.get("output", "")},
+                    ]
+                    return {"text": tokenizer.apply_chat_template(messages, tokenize=False)}
+
+                dataset = dataset.map(format_instruction, remove_columns=list(dataset.features))
+                split = dataset.train_test_split(test_size=EVAL_SAMPLES, seed=42)
+                train_ds, eval_ds = split["train"], split["test"]
+                log(f"[data] train={len(train_ds)} eval={len(eval_ds)} from {DATASET}")
+
+                log(f"[model] loading {MODEL_PATH}")
+                model = AutoModelForCausalLM.from_pretrained(
+                    MODEL_PATH, torch_dtype=torch.bfloat16, trust_remote_code=True
+                )
+                model.config.use_cache = False
+
+                lora_config = LoraConfig(
+                    r=LORA_RANK,
+                    lora_alpha=LORA_RANK * 2,
+                    target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                                    "gate_proj", "up_proj", "down_proj"],
+                    lora_dropout=0.05,
+                    bias="none",
+                    task_type="CAUSAL_LM",
+                )
+
+                training_args = TrainingArguments(
+                    output_dir="/tmp/sft-checkpoints",
+                    max_steps=MAX_STEPS,
+                    per_device_train_batch_size=BATCH_SIZE,
+                    per_device_eval_batch_size=BATCH_SIZE,
+                    gradient_accumulation_steps=1,
+                    learning_rate=LEARNING_RATE,
+                    warmup_ratio=0.03,
+                    lr_scheduler_type="cosine",
+                    logging_steps=10,
+                    eval_strategy="steps",
+                    eval_steps=max(1, MAX_STEPS // 2),
+                    save_strategy="no",
+                    bf16=True,
+                    gradient_checkpointing=True,
+                    gradient_checkpointing_kwargs={"use_reentrant": False},
+                    ddp_find_unused_parameters=False,
+                    disable_tqdm=True,
+                    report_to="none",
+                )
+
+                trainer = SFTTrainer(
+                    model=model,
+                    args=training_args,
+                    train_dataset=train_ds,
+                    eval_dataset=eval_ds,
+                    peft_config=lora_config,
+                    max_seq_length=MAX_SEQ_LENGTH,
+                    tokenizer=tokenizer,
+                    dataset_text_field="text",
+                    packing=True,
+                )
+                trainer.add_callback(RayTrainReportCallback())
+                trainer = prepare_trainer(trainer)
+                if is_main:
+                    trainer.model.print_trainable_parameters()
+
+                log("[train] starting...")
+                train_result = trainer.train()
+                eval_loss = trainer.evaluate()["eval_loss"]
+                log(f"[result] train_loss={train_result.metrics.get('train_loss'):.4f} "
+                    f"eval_loss={eval_loss:.4f} perplexity={math.exp(eval_loss):.2f}")
+
+                if is_main:
+                    log(f"[save] writing LoRA adapter to {OUTPUT_DIR}")
+                    trainer.save_model(OUTPUT_DIR)
+                    tokenizer.save_pretrained(OUTPUT_DIR)
+                    print("=== kuberay fine-tune complete:", OUTPUT_DIR, "===", flush=True)
+
+
+            def main():
+                ray.init()
+                num_workers = int(os.environ.get("NUM_WORKERS", "4"))
+                trainer = TorchTrainer(
+                    train_func,
+                    scaling_config=ScalingConfig(
+                        num_workers=num_workers,
+                        use_gpu=True,
+                        resources_per_worker={"GPU": 1, "CPU": 4},
+                    ),
+                    run_config=RunConfig(
+                        name="qwen-sft-ray",
+                        storage_path=os.environ["RAY_STORAGE"],
+                    ),
+                )
+                result = trainer.fit()
+                print(f"[driver] final metrics: {result.metrics}", flush=True)
+                ray.shutdown()
+
+
+            if __name__ == "__main__":
+                main()
+            PYEOF
+            python /tmp/ft.py
+          runtimeEnvYAML: |
+            pip:
+              - torch==2.3.1
+              - transformers==4.46.3
+              - datasets==2.19.0
+              - accelerate==1.1.1
+              - peft==0.13.2
+              - trl==0.11.4
+              - "pyarrow<14.0.0"
+              - sentencepiece
+              - protobuf
+            env_vars:
+              NCCL_DEBUG: WARN
+          rayClusterSpec:
+            rayVersion: "2.20.0"
+            headGroupSpec:
+              rayStartParams:
+                dashboard-host: "0.0.0.0"
+                num-gpus: "0"
+              template:
+                spec:
+                  tolerations:
+                    - key: nvidia.com/gpu.product
+                      operator: Exists
+                      effect: NoExecute
+                  containers:
+                    - name: ray-head
+                      image: '{{ serverConfig.rayImage }}'
+                      env:
+                        - name: HOME
+                          value: /tmp
+                        - name: HF_HOME
+                          value: /tmp/hf
+                        - name: MODEL_PATH
+                          value: '{{ serverConfig.model }}'
+                        - name: DATASET
+                          value: '{{ serverConfig.dataset }}'
+                        - name: OUTPUT_DIR
+                          value: '{{ scratchpad.mountPath }}/{{ serverConfig.kuberayAdapter }}'
+                        - name: RAY_STORAGE
+                          value: '{{ scratchpad.mountPath }}/{{ serverConfig.kuberayAdapter }}/ray-runs'
+                        - name: NUM_WORKERS
+                          value: '{{ serverConfig.gpuCount }}'
+                        - name: MAX_STEPS
+                          value: '{{ serverConfig.maxSteps }}'
+                        - name: LORA_RANK
+                          value: '{{ serverConfig.loraRank }}'
+                      ports:
+                        - { name: gcs, containerPort: 6379 }
+                        - { name: dashboard, containerPort: 8265 }
+                        - { name: client, containerPort: 10001 }
+                      resources:
+                        requests:
+                          cpu: "2"
+                          memory: 8Gi
+                        limits:
+                          cpu: "4"
+                          memory: 16Gi
+                      volumeMounts:
+                        - name: scratchpad
+                          mountPath: '{{ scratchpad.mountPath }}'
+                          subPath: '{{ scratchpad.subPath }}'
+                  volumes:
+                    - name: scratchpad
+                      persistentVolumeClaim:
+                        claimName: '{{ scratchpad.pvc }}'
+            workerGroupSpecs:
+              - groupName: gpu-group
+                replicas: 1
+                minReplicas: 1
+                maxReplicas: 1
+                rayStartParams: {}
+                template:
+                  spec:
+                    tolerations:
+                      - key: nvidia.com/gpu.product
+                        operator: Exists
+                        effect: NoExecute
+                    containers:
+                      - name: ray-worker
+                        image: '{{ serverConfig.rayImage }}'
+                        env:
+                          - name: HOME
+                            value: /tmp
+                          - name: HF_HOME
+                            value: /tmp/hf
+                          - name: MODEL_PATH
+                            value: '{{ serverConfig.model }}'
+                          - name: DATASET
+                            value: '{{ serverConfig.dataset }}'
+                          - name: OUTPUT_DIR
+                            value: '{{ scratchpad.mountPath }}/{{ serverConfig.kuberayAdapter }}'
+                          - name: RAY_STORAGE
+                            value: '{{ scratchpad.mountPath }}/{{ serverConfig.kuberayAdapter }}/ray-runs'
+                          - name: MAX_STEPS
+                            value: '{{ serverConfig.maxSteps }}'
+                          - name: LORA_RANK
+                            value: '{{ serverConfig.loraRank }}'
+                        resources:
+                          requests:
+                            cpu: "12"
+                            memory: 48Gi
+                            nvidia.com/gpu: '{{ serverConfig.gpuCount }}'
+                          limits:
+                            cpu: "24"
+                            memory: 96Gi
+                            nvidia.com/gpu: '{{ serverConfig.gpuCount }}'
+                        volumeMounts:
+                          - name: models
+                            mountPath: /models
+                            readOnly: true
+                          - name: scratchpad
+                            mountPath: '{{ scratchpad.mountPath }}'
+                            subPath: '{{ scratchpad.subPath }}'
+                          - name: shm
+                            mountPath: /dev/shm
+                    volumes:
+                      - name: models
+                        persistentVolumeClaim:
+                          claimName: '{{ serverConfig.modelsPVC }}'
+                      - name: scratchpad
+                        persistentVolumeClaim:
+                          claimName: '{{ scratchpad.pvc }}'
+                      - name: shm
+                        emptyDir:
+                          medium: Memory
+                          sizeLimit: 16Gi
+
+    # 3) Gate. CRD applies are fire-and-forget, so this ephemeral pod blocks the DAG until
+    #    BOTH adapters have been written to the scratchpad (each frameworks' job frees its
+    #    GPUs on completion, so they run back-to-back rather than truly in parallel).
+    - name: wait-adapters
+      image: registry.redhat.io/ubi9/ubi:9.8
+      env:
+        - name: KUBEFLOW_ADAPTER
+          value: '/uat_scratchpad/{{ serverConfig.kubeflowAdapter }}/adapter_config.json'
+        - name: KUBERAY_ADAPTER
+          value: '/uat_scratchpad/{{ serverConfig.kuberayAdapter }}/adapter_config.json'
+      command:
+        args:
+          - bash
+          - -c
+          - |
+            set -euo pipefail
+            deadline=$(( $(date +%s) + 3300 ))
+            for target in "$KUBEFLOW_ADAPTER" "$KUBERAY_ADAPTER"; do
+              echo "--- waiting for $target ---"
+              until [ -f "$target" ]; do
+                if [ "$(date +%s)" -ge "$deadline" ]; then
+                  echo "timed out waiting for $target" >&2
+                  exit 1
+                fi
+                sleep 15
+              done
+              echo "found $target"
+            done
+            echo "=== both adapters present on the scratchpad ==="
+            ls -la /uat_scratchpad/*/
+
+    # 4) Serve. vLLM loads the base model from /models plus BOTH adapters straight off the
+    #    scratchpad, exposing each as its own model id on a single GPU. Persists while the
+    #    query step runs.
+    - name: vllm-server
+      image: docker.io/vllm/vllm-openai:v0.6.6
+      service:
+        enabled: true
+        port: 8080
+        name: vllm-server
+        headless: true
+      command:
+        args:
+          - python3
+          - -m
+          - vllm.entrypoints.openai.api_server
+          - '--model={{ serverConfig.model }}'
+          - '--served-model-name={{ serverConfig.baseModelName }}'
+          - --port=8080
+          - --max-model-len=8192
+          - --gpu-memory-utilization=0.90
+          - --enable-lora
+          - '--max-lora-rank={{ serverConfig.loraRank }}'
+          - --max-loras=2
+          - '--lora-modules={{ serverConfig.kubeflowAdapter }}=/uat_scratchpad/{{ serverConfig.kubeflowAdapter }}'
+          - '{{ serverConfig.kuberayAdapter }}=/uat_scratchpad/{{ serverConfig.kuberayAdapter }}'
+      env:
+        - name: HOME
+          value: /tmp
+      ports:
+        - containerPort: 8080
+          name: http
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 8080
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 60
+      resources:
+        requests:
+          nvidia.com/gpu: "1"
+        limits:
+          nvidia.com/gpu: "1"
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
+      volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+      persistsThroughSweep: true
+
+    # 5) Query (pass/fail). Proves the base model and both fine-tuned adapters are registered
+    #    on /v1/models and each serves a completion.
+    - name: query
+      image: registry.redhat.io/ubi9/ubi:9.8
+      labelFilter: pass-fail
+      env:
+        - name: SERVER_URL
+          value: '{{ services["vllm-server"]["url"] }}'
+        - name: BASE_MODEL
+          value: '{{ serverConfig.baseModelName }}'
+        - name: KUBEFLOW_MODEL
+          value: '{{ serverConfig.kubeflowAdapter }}'
+        - name: KUBERAY_MODEL
+          value: '{{ serverConfig.kuberayAdapter }}'
+        - name: PROMPT
+          value: '{{ serverConfig.prompt }}'
+
+    # 6) Query (quantitative). Sends the instruction prompt through /v1/chat/completions to the
+    #    base model and both adapters, then records tokens generated, end-to-end latency and
+    #    throughput per model as report entries — a measured comparison, not just a status code.
+    - name: query-quant
+      image: registry.redhat.io/ubi9/ubi:9.8
+      labelFilter: quantitative
+      env:
+        - name: SERVER_URL
+          value: '{{ services["vllm-server"]["url"] }}'
+        - name: BASE_MODEL
+          value: '{{ serverConfig.baseModelName }}'
+        - name: KUBEFLOW_MODEL
+          value: '{{ serverConfig.kubeflowAdapter }}'
+        - name: KUBERAY_MODEL
+          value: '{{ serverConfig.kuberayAdapter }}'
+        - name: PROMPT
+          value: '{{ serverConfig.prompt }}'

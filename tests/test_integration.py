@@ -5,7 +5,6 @@ import json
 import subprocess
 
 import pytest
-import yaml
 
 
 @pytest.fixture()
@@ -44,12 +43,6 @@ class TestOutputStructure:
         assert manifests_dir.is_dir()
         manifests = list(manifests_dir.iterdir())
         assert all(f.suffix == ".yaml" for f in manifests)
-
-    def test_tekton_dir(self, build_dir):
-        tekton = build_dir / "tekton"
-        assert (tekton / "cluster-pipeline.yaml").exists()
-        assert (tekton / "pipelinerun.yaml").exists()
-        assert any("-grd-" in f.name for f in tekton.iterdir())
 
     def test_steps_json(self, build_dir):
         data = json.loads((build_dir / "steps.json").read_text())
@@ -93,69 +86,6 @@ class TestManualOutput:
         scripts = sorted(f.name for f in (build_dir / "manual").glob("*.sh"))
         counters = [int(s.split("-", 1)[0]) for s in scripts]
         assert counters == sorted(counters)
-
-
-class TestTektonOutput:
-    def test_all_yaml_valid(self, build_dir):
-        for f in (build_dir / "tekton").glob("*.yaml"):
-            docs = list(yaml.safe_load_all(f.read_text()))
-            for doc in docs:
-                if doc is None:
-                    continue
-                assert "apiVersion" in doc, f"Missing apiVersion in {f.name}"
-                assert "kind" in doc, f"Missing kind in {f.name}"
-
-    def test_timestamp_uses_param(self, build_dir):
-        for f in (build_dir / "tekton").glob("*.yaml"):
-            content = f.read_text()
-            assert "__TIMESTAMP__" not in content, f"Unsubstituted in {f.name}"
-
-    def test_flat_pipeline_all_task_refs(self, build_dir):
-        tekton = build_dir / "tekton"
-        doc = yaml.safe_load((tekton / "cluster-pipeline.yaml").read_text())
-        for task in doc["spec"]["tasks"]:
-            assert "taskRef" in task, f"Task {task['name']} missing taskRef"
-            assert "pipelineRef" not in task, (
-                f"Task {task['name']} has pipelineRef (expected flat pipeline)"
-            )
-
-    def test_guard_tasks_exist(self, build_dir):
-        tekton = build_dir / "tekton"
-        guard_files = [f for f in tekton.iterdir() if "-grd-" in f.name]
-        assert len(guard_files) > 0, "No guard task files generated"
-
-    def test_finally_no_run_after(self, build_dir):
-        tekton = build_dir / "tekton"
-        doc = yaml.safe_load((tekton / "cluster-pipeline.yaml").read_text())
-        for task in doc["spec"].get("finally", []):
-            assert "runAfter" not in task, (
-                f"Finally task {task['name']} has runAfter"
-                " (Tekton forbids runAfter in finally tasks)"
-            )
-
-    def test_finally_tasks_are_composite(self, build_dir):
-        tekton = build_dir / "tekton"
-        doc = yaml.safe_load((tekton / "cluster-pipeline.yaml").read_text())
-        for pipeline_task in doc["spec"].get("finally", []):
-            task_file = tekton / f"task-{pipeline_task['name']}.yaml"
-            assert task_file.exists(), f"Missing task file for {pipeline_task['name']}"
-            task_doc = yaml.safe_load(task_file.read_text())
-            steps = task_doc["spec"]["steps"]
-            assert len(steps) >= 2, (
-                f"Finally task {pipeline_task['name']} should combine"
-                f" multiple teardown steps, got {len(steps)}"
-            )
-
-    def test_no_nested_pipeline_files(self, build_dir):
-        tekton = build_dir / "tekton"
-        node_pipelines = [f for f in tekton.iterdir() if f.name.startswith("node-")]
-        test_pipelines = [
-            f
-            for f in tekton.iterdir()
-            if f.name.startswith("test-") and not f.name.startswith("test-pod")
-        ]
-        assert len(node_pipelines) == 0, "Node pipeline files should not exist"
-        assert len(test_pipelines) == 0, "Test pipeline files should not exist"
 
 
 class TestStepsRoundTrip:

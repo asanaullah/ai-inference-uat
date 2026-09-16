@@ -50,9 +50,7 @@ class TestValidateManifest:
         )
 
     def test_generate_name(self):
-        validate_manifest(
-            "apiVersion: v1\nkind: PipelineRun\nmetadata:\n  generateName: x-\n"
-        )
+        validate_manifest("apiVersion: v1\nkind: Pod\nmetadata:\n  generateName: x-\n")
 
     def test_missing_api_version(self):
         with pytest.raises(ValueError, match="apiVersion"):
@@ -217,10 +215,10 @@ class TestBuildResourceName:
         assert name.endswith("-t")
 
     def test_unused_fields_are_dashes(self):
-        name = build_resource_name(test_id="001", resource_type="grd")
+        name = build_resource_name(test_id="001", resource_type="cln")
         assert (
             name
-            == "ua-001-grd-"
+            == "ua-001-cln-"
             + "-" * 16
             + "-"
             + "-" * 10
@@ -441,6 +439,7 @@ class TestValueFromTemplate:
             "volumes": [],
             "workspace_subpath": "ws",
             "binaries_subpath": "bin",
+            "scratchpad_subpath": "scratch",
             "models_storage": None,
             "pvc": "pvc",
             "extra_labels": extra_labels or {},
@@ -537,6 +536,7 @@ class TestCustomPodLabels:
             "volumes": [],
             "workspace_subpath": "ws",
             "binaries_subpath": "bin",
+            "scratchpad_subpath": "scratch",
             "models_storage": None,
             "pvc": "pvc",
             "extra_labels": extra_labels,
@@ -648,6 +648,7 @@ class TestSidecarTemplate:
             "volumes": [],
             "workspace_subpath": "ws",
             "binaries_subpath": "bin",
+            "scratchpad_subpath": "scratch",
             "models_storage": None,
             "pvc": "pvc",
             "extra_labels": {},

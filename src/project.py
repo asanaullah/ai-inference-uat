@@ -65,6 +65,8 @@ def compute_project_steps(
                 services=services,
                 jinja_env=jinja_env,
                 scope=scope,
+                pvc=step_pvc,
+                base_path=step_base_path,
             )
         elif dag_step.persists_through_sweep:
             if dag_step.peer:

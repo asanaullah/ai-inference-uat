@@ -252,6 +252,8 @@ def _generate_set_steps(
                 scope=scope,
                 node_spec_dict=node_spec_dict,
                 set_key=set_key,
+                pvc=step_pvc,
+                base_path=step_base_path,
             )
         elif dag_step.persists_through_sweep:
             if dag_step.peer:
