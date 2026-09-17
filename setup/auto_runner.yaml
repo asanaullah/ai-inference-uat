@@ -42,11 +42,11 @@ spec:
         - |
           set -euo pipefail
           boot="$(mktemp -d)"
-          git clone --depth 1 --branch "${REPO_REF}" "${REPO_URL}" "${boot}"
+          git clone --depth 1 "${REPO_URL}" "${boot}"
           exec bash "${boot}/scripts/auto_runner_setup.sh"
       env:
         - name: REPO_URL
-          value: "https://github.com/asanaullah/ai-inference-uat.git"
+          value: "https://github.com/asanaullah/ai-uat-harness.git"
         # Build command producing build/steps.json + build/manual/*.sh. Runs
         # from the cloned repo root. Keep the suite/cluster non-admin.
         - name: BUILD_CMD
