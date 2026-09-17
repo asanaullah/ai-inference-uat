@@ -31,7 +31,7 @@ export HOME="${RUN_DIR}"
 export PYTHONUNBUFFERED=1
 exec > >(stdbuf -oL -eL tee -a "${RUN_DIR}/runner.log") 2>&1
 echo "=== uat-runner ${RUN_ID} ==="
-echo "repo=${REPO_URL}
+echo "repo=${REPO_URL}"
 
 git clone "${REPO_URL}" "${REPO_DIR}"
 cd "${REPO_DIR}"
