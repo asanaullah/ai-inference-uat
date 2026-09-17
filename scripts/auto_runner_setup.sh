@@ -7,7 +7,6 @@
 set -euo pipefail
 
 : "${REPO_URL:?REPO_URL is required}"
-: "${REPO_REF:?REPO_REF is required}"
 : "${BUILD_CMD:?BUILD_CMD is required}"
 UAT_WORKSPACE="${UAT_WORKSPACE:-/uat_workspace}"
 UAT_BIN="${UAT_BIN:-/uat_bin}"
@@ -32,11 +31,10 @@ export HOME="${RUN_DIR}"
 export PYTHONUNBUFFERED=1
 exec > >(stdbuf -oL -eL tee -a "${RUN_DIR}/runner.log") 2>&1
 echo "=== uat-runner ${RUN_ID} ==="
-echo "repo=${REPO_URL} ref=${REPO_REF}"
+echo "repo=${REPO_URL}
 
 git clone "${REPO_URL}" "${REPO_DIR}"
 cd "${REPO_DIR}"
-git checkout "${REPO_REF}"
 SHA="$(git rev-parse HEAD)"
 echo "resolved commit=${SHA}"
 
@@ -65,8 +63,7 @@ cat > "${META_DIR}/meta.json" <<EOF
 {
   "run_id": "${RUN_ID}",
   "build_run_id": "${BUILD_RUN_ID}",
-  "repo_url": "${REPO_URL}",
-  "repo_ref": "${REPO_REF}",
+  "repo_url": "${REPO_URL}"
   "commit": "${SHA}",
   "build_cmd": "${BUILD_CMD}",
   "oc_binary": "meta/oc",

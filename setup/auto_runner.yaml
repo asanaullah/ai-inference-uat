@@ -47,8 +47,6 @@ spec:
       env:
         - name: REPO_URL
           value: "https://github.com/asanaullah/ai-inference-uat.git"
-        - name: REPO_REF
-          value: "worktree-finetuning-tests"
         # Build command producing build/steps.json + build/manual/*.sh. Runs
         # from the cloned repo root. Keep the suite/cluster non-admin.
         - name: BUILD_CMD
