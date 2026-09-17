@@ -51,7 +51,7 @@ spec:
     # fine-tuning
     - name: finetune-lora
       scope: project
-      onFailure: continue
+      onFailure: skipTest
       timeout: 3600
     # multi-tenancy
     - name: ping
