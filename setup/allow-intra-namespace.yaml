@@ -37,9 +37,6 @@ spec:
   - to:
     - ipBlock:
         cidr: 0.0.0.0/0
-        except:
-        - 10.132.0.0/14
-        - 172.31.0.0/16
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -60,9 +57,6 @@ spec:
   - to:
     - ipBlock:
         cidr: 0.0.0.0/0
-        except:
-        - 10.132.0.0/14
-        - 172.31.0.0/16
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -83,6 +77,3 @@ spec:
   - to:
     - ipBlock:
         cidr: 0.0.0.0/0
-        except:
-        - 10.132.0.0/14
-        - 172.31.0.0/16
